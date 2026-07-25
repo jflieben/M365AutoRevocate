@@ -1,0 +1,29 @@
+# Azure Functions
+bin/
+obj/
+local.settings.json
+.python_packages/
+__blobstorage__/
+__queuestorage__/
+__azurite_db*__.json
+
+# Deployment artifacts
+*.zip
+deploy/*.publishsettings
+
+# PowerShell
+*.psd1.bak
+
+# Editors / OS
+.vs/
+.vscode/
+.idea/
+*.user
+Thumbs.db
+.DS_Store
+
+# Secrets (there should be none, but just in case)
+*.pem
+*.pfx
+*.key
+secrets.json
