@@ -23,8 +23,8 @@ app setting, and the web app footer at deploy time).
 - **One-line installer (`install.ps1`).** Run
   `iex (irm https://raw.githubusercontent.com/jflieben/M365AutoRevocate/main/install.ps1)`
   in Azure Cloud Shell (PowerShell)
-- **Automatic releases.** A `Release` GitHub workflow watches the `VERSION` file
-  on `main`; 
+- **Automatic releases.** The CI workflow publishes a GitHub release (code, web,
+  installer, checksums) the first time a bumped `VERSION` reaches `main`.
 - **New optional `-Tags` parameter** to apply resource-group tags at install,
 
 ### Platform

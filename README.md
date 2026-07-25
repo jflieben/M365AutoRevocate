@@ -266,7 +266,7 @@ install.ps1                          One-line bootstrap (iex) -> latest release 
 deploy/Deploy-M365AutoRevocate.ps1   Onboarding script (idempotent)
 deploy/Update-M365AutoRevocate.ps1   Fast, non-interactive code/web update
 deploy/Remove-M365AutoRevocate.ps1   Uninstaller (-KeepData / -SkipExchange)
-.github/workflows/                   CI (analyze + test) and Release (auto-release on VERSION bump)
+.github/workflows/ci.yml             CI: analyze + test, plus auto-release on VERSION bump
 src/                                 Function App
   Modules/AutoRevocate/              Logic (Graph, storage, config, actions, mail, safety, auth)
   NotificationHandler/               HTTP: Graph callback
@@ -313,10 +313,11 @@ Re-running the **one-line installer** also updates you: it pulls the latest
 release and runs the (idempotent) full deploy. Use `Update-M365AutoRevocate.ps1`
 when you only want the fast code/web refresh without re-checking permissions.
 
-Releases are cut automatically: pushing a bumped `VERSION` to `main` triggers the
-Release workflow, which runs the test gate, packages the code/web/installer and
-publishes a GitHub release. The in-app weekly [update check](#update-notifications)
-compares against that.
+Releases are cut automatically: when a bumped `VERSION` reaches `main`, the CI
+workflow's release job (gated on the test job) packages the code/web/installer
+and publishes a GitHub release for that version. A push that does not change
+`VERSION` finds the release already present and skips. The in-app weekly
+[update check](#update-notifications) compares against that.
 
 ### Update notifications
 

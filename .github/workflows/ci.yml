@@ -5,9 +5,9 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  # Allow other workflows (release.yml) to reuse this test job so the gate is
-  # defined in exactly one place.
-  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -38,3 +38,101 @@ jobs:
         run: |
           $r = Invoke-Pester -Path ./tests -Output Detailed -PassThru
           if ($r.FailedCount -gt 0) { throw "$($r.FailedCount) test(s) failed." }
+
+  # Publishes a GitHub release (function code + web app + installer) the first
+  # time a given VERSION is seen on main. A push that does not bump VERSION finds
+  # the release already present and does nothing, so this is safe to run on every
+  # push. Gated on the test job so a broken build is never released.
+  release:
+    name: Package + publish release
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version and check for an existing release
+        id: ver
+        shell: pwsh
+        run: |
+          $version = (Get-Content ./VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+(\.\d+){0,3}$') { throw "VERSION '$version' is not a valid version." }
+          $tag = "v$version"
+          # gh returns non-zero when the release is absent; capture that WITHOUT
+          # failing the step (GitHub exits the step with the last $LASTEXITCODE).
+          gh release view $tag 1>$null 2>$null
+          $exists = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag"         >> $env:GITHUB_OUTPUT
+          "exists=$exists"   >> $env:GITHUB_OUTPUT
+          if ($exists) { Write-Host "Release $tag already exists; nothing to do." }
+          else { Write-Host "VERSION is $version; will create release $tag." }
+
+      - name: Build artifacts
+        if: steps.ver.outputs.exists == 'False'
+        shell: pwsh
+        run: |
+          $version = '${{ steps.ver.outputs.version }}'
+          New-Item -ItemType Directory -Force out | Out-Null
+          # Function code (exclude any local settings that could hold secrets).
+          $stage = Join-Path ([System.IO.Path]::GetTempPath()) 'src'
+          Copy-Item ./src $stage -Recurse -Force
+          Get-ChildItem $stage -Filter 'local.settings.json*' -Recurse -Force | Remove-Item -Force
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath "out/M365AutoRevocate-src-$version.zip" -Force
+          Compress-Archive -Path ./web/* -DestinationPath "out/M365AutoRevocate-web-$version.zip" -Force
+          Copy-Item ./install.ps1 out/install.ps1
+          # Checksums for the zips.
+          Get-ChildItem out -Filter *.zip | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "$h  $($_.Name)" | Out-File "out/$($_.Name).sha256" -Encoding ascii
+          }
+          Get-ChildItem out
+
+      - name: Extract release notes from CHANGELOG
+        if: steps.ver.outputs.exists == 'False'
+        shell: pwsh
+        run: |
+          $version = '${{ steps.ver.outputs.version }}'
+          $notes = ''
+          if (Test-Path ./CHANGELOG.md) {
+            $lines = Get-Content ./CHANGELOG.md
+            # Prefer a heading naming this version; otherwise the Unreleased section.
+            $start = -1
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match '^##\s' -and ($lines[$i] -match [regex]::Escape($version) -or $lines[$i] -match '(?i)unreleased')) { $start = $i; break }
+            }
+            if ($start -ge 0) {
+              $buf = @()
+              for ($j = $start + 1; $j -lt $lines.Count; $j++) {
+                if ($lines[$j] -match '^##\s') { break }
+                $buf += $lines[$j]
+              }
+              $notes = ($buf -join "`n").Trim()
+            }
+          }
+          if (-not $notes) { $notes = "Release $version." }
+          $installCmd = 'iex (irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1)'
+          $notes = "$notes`n`n---`n**Install / update (Azure Cloud Shell, PowerShell):**`n`n``````powershell`n$installCmd`n``````"
+          $notes | Out-File release-notes.md -Encoding utf8
+          Write-Host '----- release notes -----'
+          Write-Host $notes
+
+      - name: Create the release
+        if: steps.ver.outputs.exists == 'False'
+        shell: pwsh
+        run: |
+          $assets = Get-ChildItem out | ForEach-Object { $_.FullName }
+          $ghArgs = @(
+            '${{ steps.ver.outputs.tag }}',
+            '--title', 'M365AutoRevocate ${{ steps.ver.outputs.version }}',
+            '--notes-file', 'release-notes.md',
+            '--target', '${{ github.sha }}'
+          ) + $assets
+          gh release create @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)." }
+          Write-Host "Published ${{ steps.ver.outputs.tag }}."
