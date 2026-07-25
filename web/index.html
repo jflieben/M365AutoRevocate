@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>M365AutoRevocate Admin</title>
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <!-- MSAL browser (delegated / authorization-code + PKCE). Bundled locally so
+       there is no external CDN dependency (avoids content filtering). -->
+  <script src="msal-browser.min.js"></script>
+  <!-- authConfig.js is written by the deploy script with your tenant/app values -->
+  <script src="authConfig.js"></script>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="logo-img" src="logo.png" alt="M365AutoRevocate logo" />
+      <div>
+        <div class="title">M365AutoRevocate</div>
+        <div class="subtitle">Offboarding automation admin console</div>
+      </div>
+    </div>
+    <div class="userbox">
+      <span id="userName" class="user-name"></span>
+      <button id="signOutBtn" class="btn ghost" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <main id="app" class="container" hidden>
+    <div id="banners"></div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="actions" role="tab">Actions</button>
+      <button class="tab" data-tab="config" role="tab">Configuration</button>
+      <button class="tab" data-tab="log" role="tab">Activity log</button>
+      <button class="tab" data-tab="diag" role="tab">Diagnostics</button>
+    </nav>
+
+    <!-- Actions (default) -->
+    <section id="tab-actions" class="tabpanel" role="tabpanel">
+      <div class="card" id="matrixCard">
+        <h2>Actions</h2>
+        <p class="muted">Tick when each action should run. A greyed box means that action is not possible at that moment.</p>
+        <div id="matrixLoading" class="loading"><span class="spinner" aria-hidden="true"></span> Loading actions…</div>
+        <div id="matrixWrap" class="table-wrap" hidden>
+          <table class="matrix">
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th class="center trig flow"><span class="trig-label">At inactive</span></th>
+                <th class="center trig flow"><span class="trig-label">At disable</span></th>
+                <th class="center trig"><span class="trig-label">At delete</span></th>
+              </tr>
+            </thead>
+            <tbody id="featureRows"><!-- rendered by app.js --></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="actions-bar">
+        <button id="saveBtnA" class="btn primary save-btn">Save configuration</button>
+        <button id="previewBtn" class="btn ghost" disabled title="See exactly which accounts the tool will act on next">Preview next changes</button>
+        <span class="status save-status" role="status"></span>
+      </div>
+    </section>
+
+    <!-- Configuration -->
+    <section id="tab-config" class="tabpanel" role="tabpanel" hidden>
+      <div class="card" id="timingCard">
+        <h2>Timing &amp; contacts</h2>
+        <div class="grid">
+          <label class="field">
+            <span>Simulation mode (dry run)</span>
+            <select id="dryRun">
+              <option value="true">On - simulate only (log, change nothing)</option>
+              <option value="false">Off - perform real actions</option>
+            </select>
+            <small>When on, every destructive action is logged but never executed. Keep it on until you have checked the Actions matrix, then turn it off to go live.</small>
+          </label>
+          <label class="field">
+            <span>Delete timing</span>
+            <select id="mode">
+              <option value="soft">Soft delete (in recycle bin)</option>
+              <option value="hard">Hard delete (permanently removed)</option>
+            </select>
+            <small>When “at delete” actions run. Hard delete waits for the purge (at the latest: one day before the automatic 30-day purge).</small>
+          </label>
+          <label class="field">
+            <span>Service desk email</span>
+            <input id="servicedeskEmail" type="email" placeholder="servicedesk@contoso.com" />
+            <small>Used when a user has no active manager.</small>
+          </label>
+          <label class="field">
+            <span>Keep activity log (days)</span>
+            <input id="logRetentionDays" type="number" min="7" max="3650" step="1" />
+            <small>Older entries are removed automatically every week. Minimum 7.</small>
+          </label>
+          <label class="field">
+            <span>Allow forwarding to external domains</span>
+            <select id="allowExternalForward">
+              <option value="false">No (verified tenant domains only)</option>
+              <option value="true">Yes</option>
+            </select>
+            <small>Restricts the mailbox-forward target. Leave off unless you deliberately forward departing mail outside the tenant.</small>
+          </label>
+          <label class="field">
+            <span>Email service desk about new versions</span>
+            <select id="versionNotify">
+              <option value="true">Yes (recommended)</option>
+              <option value="false">No</option>
+            </select>
+            <small>A weekly check compares this install with the public repo. The in-app banner always shows an available update; this only controls whether the service desk is emailed once per new version.</small>
+          </label>
+        </div>
+
+        <h2 style="margin-top:20px">Safety limits (circuit breaker)</h2>
+        <p class="muted">If a run would act on more users than these limits, the tool pauses all processing and asks you to review before anything else happens. This is your protection against a bulk mistake (a mass disable, an accidental sync deletion, a first inactivity scan in an old tenant).</p>
+        <div class="grid">
+          <label class="field">
+            <span>Circuit breaker</span>
+            <select id="safetyEnabled">
+              <option value="true">On (recommended)</option>
+              <option value="false">Off</option>
+            </select>
+            <small>Strongly recommended on.</small>
+          </label>
+          <label class="field">
+            <span>Max inactive actions / day</span>
+            <input id="capInactive" type="number" min="0" step="1" />
+            <small>0 = no numeric cap (percent ceiling still applies).</small>
+          </label>
+          <label class="field">
+            <span>Max disable actions / day</span>
+            <input id="capDisable" type="number" min="0" step="1" />
+          </label>
+          <label class="field">
+            <span>Max delete actions / day</span>
+            <input id="capDelete" type="number" min="0" step="1" />
+          </label>
+          <label class="field">
+            <span>Max % of directory / day</span>
+            <input id="percentCeiling" type="number" min="0" max="100" step="1" />
+            <small>Backstop for large tenants. 0 = off.</small>
+          </label>
+        </div>
+
+        <h2 style="margin-top:20px">Always ignore (global exclusions)</h2>
+        <p class="muted">These accounts are <strong>never</strong> touched by any action, at any trigger (inactive, disable or delete). Use this for break-glass and service accounts, and to keep resource mailboxes out of offboarding entirely.</p>
+        <div class="grid">
+          <div class="field">
+            <span>Exclusion group</span>
+            <div class="picker">
+              <input id="inactiveExclusionGroup" type="text" autocomplete="off" placeholder="Type to search Entra groups…" />
+              <div class="suggest" hidden></div>
+            </div>
+            <small class="picker-msg">Members are never acted on, at any trigger. Pick from the suggestions.</small>
+          </div>
+          <label class="field">
+            <span>Exclude shared / room / equipment mailboxes</span>
+            <select id="excludeSharedMailboxes">
+              <option value="true">Yes (recommended)</option>
+              <option value="false">No</option>
+            </select>
+            <small>Reads mailbox types from Exchange (needs the View-Only Recipients role). These are never acted on. If it can't be read, they are skipped rather than risk acting on them.</small>
+          </label>
+        </div>
+
+        <h2 style="margin-top:20px">Inactive-user monitoring</h2>
+        <div class="grid">
+          <label class="field">
+            <span>Monitor for inactive users</span>
+            <select id="inactiveEnabled">
+              <option value="false">Off</option>
+              <option value="true">On</option>
+            </select>
+            <small>Daily scan for accounts nobody signs in to.</small>
+          </label>
+          <label class="field">
+            <span>Inactive after (days)</span>
+            <input id="inactiveDays" type="number" min="7" step="1" />
+            <small>Minimum 7. Never-signed-in accounts age from their creation date.</small>
+            <small class="muted">Use <strong>Preview next changes</strong> on the Actions tab to see who this would flag.</small>
+          </label>
+        </div>
+      </div>
+      <div class="actions-bar">
+        <button id="saveBtnC" class="btn primary save-btn">Save configuration</button>
+        <span class="status save-status" role="status"></span>
+      </div>
+    </section>
+
+    <!-- Activity log -->
+    <section id="tab-log" class="tabpanel" role="tabpanel" hidden>
+      <div class="card">
+        <div class="card-head">
+          <h2>Recent activity</h2>
+          <div class="log-controls">
+            <select id="logTrigger" title="Filter by trigger">
+              <option value="">All triggers</option>
+              <option value="delete">delete</option>
+              <option value="disable">disable</option>
+              <option value="inactive">inactive</option>
+              <option value="system">system</option>
+            </select>
+            <input id="logSearch" type="text" placeholder="Filter user / event…" />
+            <button id="refreshLog" class="btn ghost">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="log">
+            <thead>
+              <tr>
+                <th>Time (UTC)</th>
+                <th>User</th>
+                <th>Trigger</th>
+                <th>Event</th>
+                <th>Mode</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="logRows"></tbody>
+          </table>
+        </div>
+        <p id="logEmpty" class="muted" hidden>No activity recorded yet.</p>
+        <div class="actions-bar" style="margin-top:10px">
+          <button id="logMore" class="btn ghost" hidden>Load more</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Diagnostics -->
+    <section id="tab-diag" class="tabpanel" role="tabpanel" hidden>
+      <div class="card" id="subCard">
+        <div class="card-head">
+          <h2>Graph subscription</h2>
+          <button id="refreshDiag" class="btn ghost">Refresh</button>
+        </div>
+        <div id="subHealth" class="muted">Loading…</div>
+        <button id="subDetailsBtn" class="btn ghost" style="margin-top:10px" hidden>Show details</button>
+        <div id="subDetails" hidden></div>
+      </div>
+      <div class="card">
+        <h2>Function health</h2>
+        <p class="muted">Last run of each worker function. Errors show their message for debugging.</p>
+        <p id="snapshotAge" class="muted"></p>
+        <p id="safetyCounts" class="muted"></p>
+        <div class="table-wrap">
+          <table class="log">
+            <thead>
+              <tr>
+                <th>Function</th>
+                <th>Status</th>
+                <th>Last run (UTC)</th>
+                <th>Duration</th>
+                <th>Last error</th>
+              </tr>
+            </thead>
+            <tbody id="fnRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <footer class="appfooter">
+      <span>M365AutoRevocate <span id="appVersion"></span></span>
+      <a href="https://github.com/jflieben/M365AutoRevocate" target="_blank" rel="noopener">Documentation &amp; updates</a>
+    </footer>
+  </main>
+
+  <!-- First-run setup wizard -->
+  <div id="wizard" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-labelledby="wizTitle">
+      <h2 id="wizTitle">Welcome! Let’s set the basics</h2>
+      <p class="muted">A few quick questions and you’re running. Afterwards you land on the <strong>Actions</strong> tab to choose what happens when.</p>
+
+      <div class="wiz-q">
+        <span class="wiz-label">1. Start in simulation mode (dry run)?</span>
+        <label class="radio"><input type="radio" name="wizDryRun" value="true" checked />
+          Yes - <strong>simulate only</strong>: log what would happen, change nothing <span class="pill">safe</span></label>
+        <label class="radio"><input type="radio" name="wizDryRun" value="false" />
+          No - <strong>perform real actions</strong> right away</label>
+      </div>
+
+      <div class="wiz-q">
+        <span class="wiz-label">2. When should delete actions run?</span>
+        <label class="radio"><input type="radio" name="wizMode" value="soft" checked />
+          As soon as a user is <strong>soft deleted</strong> (lands in the recycle bin)</label>
+        <label class="radio"><input type="radio" name="wizMode" value="hard" />
+          Only once a user is <strong>hard deleted</strong> (permanently removed)</label>
+      </div>
+
+      <div class="wiz-q">
+        <label class="field">
+          <span>3. Service desk email (fallback when a user has no active manager)</span>
+          <input id="wizServicedesk" type="email" placeholder="servicedesk@contoso.com" />
+        </label>
+        <label class="radio" style="margin-top:10px"><input type="checkbox" id="wizVersionNotify" checked />
+          Also email the service desk when a <strong>new version</strong> is available (a weekly check; the in-app banner shows it either way)</label>
+      </div>
+
+      <div class="wiz-q">
+        <span class="wiz-label">4. Also monitor for inactive users?</span>
+        <label class="radio"><input type="radio" name="wizInactive" value="false" checked />
+          No, only react to disable/delete events</label>
+        <label class="radio"><input type="radio" name="wizInactive" value="true" />
+          Yes, flag accounts nobody signs in to <span class="pill">new</span></label>
+      </div>
+
+      <div id="wizInactiveExtra" class="wiz-q" hidden>
+        <label class="field">
+          <span>5. Consider an account inactive after (days)</span>
+          <input id="wizDays" type="number" min="7" step="1" value="90" />
+        </label>
+        <div class="field" style="margin-top:10px">
+          <span>6. Exclusion group (optional, recommended)</span>
+          <div class="picker">
+            <input id="wizExclusionGroup" type="text" autocomplete="off" placeholder="Type to search Entra groups…" />
+            <div class="suggest" hidden></div>
+          </div>
+          <small class="picker-msg">Members are never flagged. Ideal for break-glass and service accounts. Pick from the suggestions.</small>
+        </div>
+      </div>
+
+      <p id="wizError" class="error" hidden></p>
+      <div class="actions-bar" style="margin:16px 0 0">
+        <button id="wizSave" class="btn primary">Save &amp; continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Projected-changes preview -->
+  <div id="previewModal" class="modal-overlay" hidden>
+    <div class="modal wide" role="dialog" aria-labelledby="previewTitle">
+      <div class="modal-head">
+        <h2 id="previewTitle">Projected changes for the next day</h2>
+        <button id="previewClose" class="btn ghost" type="button">Close</button>
+      </div>
+      <p class="muted">What the tool will do next, based on the current directory and the settings on screen. Nothing here has happened yet.</p>
+      <div id="previewBody"><!-- rendered by app.js --></div>
+    </div>
+  </div>
+
+  <!-- Welcome tour callout -->
+  <div id="tour" class="tour" hidden>
+    <div id="tourBox" class="callout">
+      <p id="tourText"></p>
+      <div class="callout-actions">
+        <span id="tourStepNo" class="muted"></span>
+        <button id="tourSkip" class="btn ghost">Skip tour</button>
+        <button id="tourNext" class="btn primary">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <div id="gate" class="gate">
+    <div class="gate-card">
+      <img class="logo-img big" src="logo.png" alt="M365AutoRevocate logo" />
+      <h1>M365AutoRevocate</h1>
+      <p id="gateMsg">Sign in with your organisational account to manage offboarding automation.</p>
+      <button id="gateSignIn" class="btn primary">Sign in</button>
+      <p id="gateError" class="error" hidden></p>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>

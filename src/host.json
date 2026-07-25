@@ -1,0 +1,30 @@
+{
+  "version": "2.0",
+  "managedDependency": {
+    "enabled": false
+  },
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.*, 5.0.0)"
+  },
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "excludedTypes": "Request"
+      }
+    },
+    "logLevel": {
+      "default": "Information",
+      "AutoRevocate": "Information"
+    }
+  },
+  "functionTimeout": "00:30:00",
+  "extensions": {
+    "queues": {
+      "batchSize": 8,
+      "maxDequeueCount": 5,
+      "visibilityTimeout": "00:00:30"
+    }
+  }
+}

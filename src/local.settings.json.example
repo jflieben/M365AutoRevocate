@@ -1,0 +1,18 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "powershell",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+
+    "AR_SENDER_UPN": "noreply@contoso.com",
+    "AR_CLIENT_STATE": "local-dev-client-state",
+    "AR_NOTIFICATION_URL": "https://<your-app>.azurewebsites.net/api/NotificationHandler?code=<key>",
+    "AR_TABLE_ENDPOINT": "https://<youraccount>.table.core.windows.net",
+    "AR_BLOB_ENDPOINT": "https://<youraccount>.blob.core.windows.net",
+    "AR_CONFIG_CONTAINER": "autorevocate-config",
+
+    "_comment": "Below are seed defaults for the behavioural config blob (used only until the first save from the web app).",
+    "AR_MODE": "soft",
+    "AR_SERVICEDESK_EMAIL": "servicedesk@contoso.com"
+  }
+}
