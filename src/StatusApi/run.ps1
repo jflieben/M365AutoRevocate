@@ -81,7 +81,10 @@ try {
 
     # --- Safety / storm guard, dry-run banner, versions, snapshot age ---------
     $cfg = Get-ARConfig
-    $features = Get-ARFeatureConfig
+    # -Fresh: the dry-run banner and permission nudges must reflect the current
+    # stored config, not a stale per-worker cache (see ConfigApi), so a reload
+    # after a save never shows a phantom "simulation mode" banner.
+    $features = Get-ARFeatureConfig -Fresh
     $safety = $null
     try { $safety = Get-ARSafetyStatus -FeatureConfig $features } catch { $safety = @{ error = $_.Exception.Message } }
 
@@ -106,6 +109,11 @@ try {
     $versionCheck = $null
     try { $versionCheck = Get-ARVersionCheckStatus } catch { $versionCheck = @{ error = $_.Exception.Message } }
 
+    # Power Platform admin access (owned flow/app actions). Reports whether the
+    # managed identity is authorised and the app id needed to authorise it.
+    $powerPlatform = $null
+    try { $powerPlatform = Get-ARPowerPlatformStatus } catch { $powerPlatform = @{ accessible = $false; error = $_.Exception.Message } }
+
     Send-Json -Status 200 -Object @{
         subscription = $subInfo
         functions    = @($functions)
@@ -113,6 +121,7 @@ try {
         dryRun       = [bool]$features.dryRun
         version      = $cfg.Version
         versionCheck = $versionCheck
+        powerPlatform = $powerPlatform
         snapshotUtc  = $snapshotUtc
         queues       = @{ revocations = $queueDepth; poison = $poison }
         permissions  = $permissions

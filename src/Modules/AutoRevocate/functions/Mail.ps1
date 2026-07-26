@@ -21,6 +21,36 @@ function Get-ARToolName {
     return $name
 }
 
+function Get-ARPowerPlatformSummaryLines {
+    <#
+    .SYNOPSIS
+        Human-readable line(s) for a Power Platform action result (disable /
+        delete / re-own), listing the flows and apps actually actioned so the
+        manager sees exactly which objects changed.
+    #>
+    [CmdletBinding()] param([string]$Verb, [string]$PastVerb, $Summary, [bool]$Dry, [string]$Prefix)
+    $lines = [System.Collections.Generic.List[string]]::new()
+    if (-not $Summary) { return $lines }
+    $total = [int]$Summary.Total
+    if ($total -eq 0) { $lines.Add("No owned Power Platform flows or apps to $Verb."); return $lines }
+
+    # Name the objects that were (or would be) actioned, capped so a prolific
+    # owner does not produce a giant email.
+    $acted = @($Summary.Items | Where-Object { $_.Result -notmatch '^(error|already|skipped)' })
+    $names = @($acted | ForEach-Object { "$($_.Kind) '$($_.Name)'" })
+    $shown = @($names | Select-Object -First 15)
+    $suffix = if ($names.Count -gt $shown.Count) { " and $($names.Count - $shown.Count) more" } else { '' }
+    $list = if ($shown.Count) { ': ' + ($shown -join ', ') + $suffix } else { '' }
+
+    if ($Dry) { $lines.Add($Prefix + "$total owned Power Platform object(s) would be ${PastVerb}$list.") }
+    else {
+        $done = [int]$Summary.Succeeded
+        if ($done -gt 0) { $lines.Add($Prefix + "$done owned Power Platform object(s) ${PastVerb}$list.") }
+    }
+    if ([int]$Summary.Errors -gt 0) { $lines.Add("$([int]$Summary.Errors) Power Platform object(s) could not be ${PastVerb}; see the activity log.") }
+    return $lines
+}
+
 function Get-ARActionSummaryLines {
     <#
     .SYNOPSIS
@@ -69,6 +99,28 @@ function Get-ARActionSummaryLines {
                 $r = [int]$v.Removed
                 if ($r -gt 0) { $lines.Add($pfx + "Removed from $r group(s).") }
                 else { $lines.Add('No removable group memberships.') }
+            }
+            'disableDevices' {
+                $t = [int]$v.Total; $dis = [int]$v.Disabled
+                if ($t -eq 0) { $lines.Add('No owned devices to disable.') }
+                elseif ($dry) { $lines.Add($pfx + "$t owned device(s) would be disabled.") }
+                elseif ($dis -gt 0) { $lines.Add($pfx + "$dis owned device(s) disabled (sign-in blocked).") }
+                else { $lines.Add('Owned devices were already disabled; left unchanged.') }
+            }
+            'deleteDevices' {
+                $t = [int]$v.Total; $del = [int]$v.Deleted
+                if ($t -eq 0) { $lines.Add('No owned devices to delete.') }
+                elseif ($dry) { $lines.Add($pfx + "$t owned device(s) would be deleted.") }
+                elseif ($del -gt 0) { $lines.Add($pfx + "$del owned device(s) permanently deleted.") }
+            }
+            'disablePowerPlatform' {
+                foreach ($l in (Get-ARPowerPlatformSummaryLines -Verb 'disable' -PastVerb 'disabled' -Summary $v -Dry $dry -Prefix $pfx)) { $lines.Add($l) }
+            }
+            'reownPowerPlatform' {
+                foreach ($l in (Get-ARPowerPlatformSummaryLines -Verb 're-own' -PastVerb 're-owned' -Summary $v -Dry $dry -Prefix $pfx)) { $lines.Add($l) }
+            }
+            'deletePowerPlatform' {
+                foreach ($l in (Get-ARPowerPlatformSummaryLines -Verb 'delete' -PastVerb 'deleted' -Summary $v -Dry $dry -Prefix $pfx)) { $lines.Add($l) }
             }
             'disableAccount' {
                 if ($v.PSObject.Properties['Disabled'] -and $v.Disabled) { $lines.Add($pfx + 'Account disabled (sign-in blocked).') }

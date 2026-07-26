@@ -1022,6 +1022,7 @@ elseif ($allowedIps.Count) {
     $steps.Add("Access is locked to $($allowedIps -join ', '). If your IP changes or a teammate needs in, add their IP: re-run with -AllowedAdminIp <ip/cidr> or edit the rules in the portal (see README > Network access).")
 }
 $steps.Add('Open the admin web app -- the first sign-in starts a short setup wizard (delete timing, inactive-user monitoring).')
+$steps.Add('OPTIONAL: to use the Power Platform actions (disable/delete/re-own a user''s flows & apps), authorise this managed identity as a Power Platform admin -- the Actions tab > "Power Platform actions" > "How to enable" shows the exact New-PowerAppManagementApp command. Until then those actions stay greyed out.')
 
 Write-Host "Next steps:" -ForegroundColor Yellow
 for ($i = 0; $i -lt $steps.Count; $i++) { Write-Host "  $($i + 1). $($steps[$i])" }

@@ -64,6 +64,48 @@ function Resolve-ARRecipient {
     return [pscustomobject]@{ Email = $ServicedeskEmail; Kind = 'servicedesk'; DisplayName = 'Service Desk' }
 }
 
+function Resolve-ARPowerPlatformOwnerId {
+    <#
+    .SYNOPSIS
+        Object id to hand re-owned Power Platform objects to: the user's manager
+        if active, otherwise the service desk (resolved from its email to an
+        object id). $null when neither can be resolved (re-own then skips). Manager
+        is read live at inactive/disable, from the snapshot at delete.
+    #>
+    [CmdletBinding()] param(
+        [string]$UserId,
+        [ValidateSet('inactive', 'disable', 'delete')][string]$Trigger = 'delete',
+        $CacheEntry,
+        [string]$ServicedeskEmail
+    )
+    $ownerId = $null
+    if ($Trigger -in @('inactive', 'disable') -and $UserId) {
+        try {
+            $m = Invoke-ARGraph -Uri ('/users/' + $UserId + '/manager?$select=id,accountEnabled') -Raw
+            if ($m.StatusCode -lt 400 -and $m.Body.accountEnabled -eq $true) { $ownerId = $m.Body.id }
+        }
+        catch { }
+    }
+    else {
+        $managerId = if ($CacheEntry) { $CacheEntry.PSObject.Properties['ManagerId'].Value } else { $null }
+        if ($managerId) {
+            try {
+                $m = Invoke-ARGraph -Uri ('/users/' + $managerId + '?$select=id,accountEnabled') -Raw
+                if ($m.StatusCode -lt 400 -and $m.Body.accountEnabled -eq $true) { $ownerId = $m.Body.id }
+            }
+            catch { }
+        }
+    }
+    if (-not $ownerId -and $ServicedeskEmail) {
+        try {
+            $sd = Invoke-ARGraph -Uri ('/users/' + [Uri]::EscapeDataString($ServicedeskEmail) + '?$select=id') -Raw
+            if ($sd.StatusCode -lt 400) { $ownerId = $sd.Body.id }
+        }
+        catch { Write-Warning "Could not resolve the service desk '$ServicedeskEmail' to an object id for Power Platform re-own: $($_.Exception.Message)" }
+    }
+    return $ownerId
+}
+
 function Find-ARUserOneDrive {
     <#
     .SYNOPSIS
@@ -444,6 +486,43 @@ function Invoke-ARRevocation {
     }
     if (Test-ARFeatureEnabled -FeatureConfig $FeatureConfig -Feature 'removeFromGroups' -Trigger $Trigger) {
         $actions['removeFromGroups'] = Remove-ARUserFromGroups -UserId $UserId
+    }
+
+    # Owned-device cleanup (all triggers). The set is read live for inactive/
+    # disable and from the snapshot for delete (the account is gone by then, but
+    # the device objects survive). Resolved ONCE so enabling both disable and
+    # delete does not fetch the list twice. Disable runs before delete so an
+    # already-deleted device is never also "disabled".
+    $wantDisableDevices = Test-ARFeatureEnabled -FeatureConfig $FeatureConfig -Feature 'disableDevices' -Trigger $Trigger
+    $wantDeleteDevices  = Test-ARFeatureEnabled -FeatureConfig $FeatureConfig -Feature 'deleteDevices'  -Trigger $Trigger
+    if ($wantDisableDevices -or $wantDeleteDevices) {
+        $devices = @()
+        try { $devices = @(Get-ARUserOwnedDevices -UserId $liveUserId -CacheEntry $Snapshot -Trigger $Trigger) }
+        catch { Write-Warning "Could not resolve owned devices for $upn`: $($_.Exception.Message)" }
+        if ($wantDisableDevices) { $actions['disableDevices'] = Disable-ARUserDevices -Devices $devices }
+        if ($wantDeleteDevices)  { $actions['deleteDevices']  = Remove-ARUserDevices  -Devices $devices }
+    }
+
+    # Owned Power Platform cleanup (all triggers). Flows/apps are matched by the
+    # user's object id (kept on the object for a while after deletion, so this
+    # works at the delete trigger too). Enumerated ONCE across all environments,
+    # then disabled/deleted/re-owned per the enabled actions. Re-own hands objects
+    # to the manager (service desk as fallback), so its owner id is resolved only
+    # when re-own is on.
+    $wantDisablePP = Test-ARFeatureEnabled -FeatureConfig $FeatureConfig -Feature 'disablePowerPlatform' -Trigger $Trigger
+    $wantDeletePP  = Test-ARFeatureEnabled -FeatureConfig $FeatureConfig -Feature 'deletePowerPlatform'  -Trigger $Trigger
+    $wantReownPP   = Test-ARFeatureEnabled -FeatureConfig $FeatureConfig -Feature 'reownPowerPlatform'   -Trigger $Trigger
+    if ($wantDisablePP -or $wantDeletePP -or $wantReownPP) {
+        $ppObjects = @()
+        try { $ppObjects = @(Get-ARUserPowerPlatformObjects -UserId $UserId) }
+        catch { Write-Warning "Could not resolve owned Power Platform objects for $upn`: $($_.Exception.Message)" }
+        if ($wantReownPP) {
+            $ppOwnerId = Resolve-ARPowerPlatformOwnerId -UserId $liveUserId -Trigger $Trigger -CacheEntry $Snapshot -ServicedeskEmail $FeatureConfig.servicedeskEmail
+            $actions['reownPowerPlatform'] = Set-ARPowerPlatformObjectsOwner -Objects $ppObjects -NewOwnerId $ppOwnerId
+        }
+        if ($wantDisablePP) { $actions['disablePowerPlatform'] = Disable-ARPowerPlatformObjects -Objects $ppObjects }
+        # Delete LAST of the three so re-own/disable can act on objects first.
+        if ($wantDeletePP)  { $actions['deletePowerPlatform']  = Remove-ARPowerPlatformObjects  -Objects $ppObjects }
     }
 
     # Resolve the hand-off recipient + artifacts BEFORE the soft delete (both are

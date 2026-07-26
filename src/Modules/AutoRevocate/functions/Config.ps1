@@ -77,6 +77,17 @@ function Get-ARConfig {
         # Exchange Online admin REST endpoint (mailbox-type lookups; sovereign override).
         ExoResource          = Get-Setting -Name 'AR_EXO_RESOURCE' -Default 'https://outlook.office365.com'
 
+        # Power Platform admin APIs (owned flow/app disable/delete/re-own). These
+        # are NOT Graph: they use their own managed-identity token audiences and
+        # hosts, and access is granted out-of-band with New-PowerAppManagementApp
+        # (see the web app's Power Platform setup help). Sovereign override only.
+        #   BapResource   -> token audience + host for the environments admin API
+        #   PowerApiResource -> token audience for the flow/powerapps admin APIs
+        PowerPlatformBapResource = (Get-Setting -Name 'AR_PP_BAP_RESOURCE' -Default 'https://api.bap.microsoft.com').TrimEnd('/')
+        PowerPlatformApiResource = Get-Setting -Name 'AR_PP_API_RESOURCE' -Default 'https://service.powerapps.com/'
+        PowerPlatformFlowHost    = (Get-Setting -Name 'AR_PP_FLOW_HOST' -Default 'https://api.flow.microsoft.com').TrimEnd('/')
+        PowerPlatformAppsHost    = (Get-Setting -Name 'AR_PP_APPS_HOST' -Default 'https://api.powerapps.com').TrimEnd('/')
+
         # Admin API auth (defense in depth under Easy Auth). The admin functions
         # validate the delegated bearer token themselves against these, so a
         # disabled/misconfigured Easy Auth becomes a visible 401 rather than a

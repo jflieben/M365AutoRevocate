@@ -27,7 +27,7 @@ flowchart TD
     SM -- "create/renew subscription (updated,deleted)" --> G
     HR -- "purged? / purge-1day?" --> G
     HR -- "when permanently deleted" --> ACT
-    DS -- "cache manager/ownership/drive/enabled" --> DT[(DirectorySnapshot)]
+    DS -- "cache manager/ownership/drive/devices/enabled" --> DT[(DirectorySnapshot)]
     IS -- "signInActivity older than threshold" --> ACT
 
     ACT -- "read enabled feature matrix" --> CFG[(config.json blob)]
@@ -52,7 +52,7 @@ flowchart TD
 | **RevocationProcessor** | Queue (`revocations`) | `deleted` → soft: act now / hard: record pending. `updated` → if now disabled and disable-features exist, act. |
 | **SubscriptionManager** | Timer (~6h + startup) | Creates/renews the `/users` `updated,deleted` subscription. Ensures tables + config container. |
 | **HardDeleteReconciler** | Timer (~6h) | For each pending user, checks the recycle bin; acts when purged or 29 days after deletion (one day before the automatic purge). |
-| **DirectorySnapshot** | Timer (daily) + seeded at deploy | Mandatory. Caches `userId → manager/profile/enabled/ownership/drive`. |
+| **DirectorySnapshot** | Timer (daily) + seeded at deploy | Mandatory. Caches `userId → manager/profile/enabled/ownership/drive/devices`. |
 | **InactivityScanner** | Timer (daily) | Flags enabled accounts inactive past the threshold and runs the inactive-trigger actions. No-op unless enabled in config. |
 | **ConfigApi / LogsApi** | HTTP (Easy Auth + token check) | Admin API for the web app: read/save the config blob (incl. first-run wizard flag, exclusion-group resolution by object id, email/forward validation); read the activity log. |
 | **GroupsApi** | HTTP (Easy Auth + token check) | Security-group search backing the exclusion-group autocomplete. |
@@ -114,9 +114,10 @@ for *permanent* deletion. So:
 ## The relationship-loss problem (why DirectorySnapshot exists)
 
 When a user is deleted, Graph **severs their relationships**:
-`/users/{id}/manager` and `/users/{id}/ownedObjects` stop resolving, and the
-recycle-bin copy will not expand them. That makes "email the manager" and "list
-owned artifacts" impossible from the deleted object alone.
+`/users/{id}/manager`, `/users/{id}/ownedObjects` and `/users/{id}/ownedDevices`
+stop resolving, and the recycle-bin copy will not expand them. That makes "email
+the manager", "list owned artifacts" and "disable/delete owned devices"
+impossible from the deleted object alone.
 
 `DirectorySnapshot` solves this by caching that context on a schedule **before**
 deletion. At cleanup time the tool reads the cache. If the cache is absent (never
@@ -127,12 +128,19 @@ The OneDrive still exists for the tenant's retention window after deletion, so i
 is located either from the cached `driveId` or by reconstructing the personal
 site URL from the UPN.
 
+Power Platform flows/apps are the exception that needs **no** snapshot: they are
+matched by the user's object id against each environment's flow/app owner, and
+Power Platform keeps that owner reference for a while after the account is gone,
+so ownership still resolves at the delete trigger. Those actions also require the
+managed identity to be authorised out of band (`New-PowerAppManagementApp`); there
+is no Graph app role (see [permissions.md](permissions.md)).
+
 ## State (Azure Storage, AAD-authenticated)
 
 | Store | Key | Contents |
 |-------|-----|----------|
 | `PendingHardDeletes` (table) | `pending` / userId | Soft-deleted users awaiting permanent deletion + captured identity |
-| `DirectorySnapshot` (table) | `user` / userId | Cached manager, profile, accountEnabled, and (optionally) ownership + drive id |
+| `DirectorySnapshot` (table) | `user` / userId | Cached manager, profile, accountEnabled, and (optionally) ownership + drive id + owned devices |
 | `ProcessedActions` (table) | trigger / userId | Idempotency guard, partitioned by `inactive` / `disable` / `delete` |
 | `ActivityLog` (table) | `log` / (maxTicks-now) | Chronological audit feed shown in the web app |
 | `FunctionHeartbeats` (table) | `fn` / function name | Last run/status/duration/error per function (Diagnostics tab) |

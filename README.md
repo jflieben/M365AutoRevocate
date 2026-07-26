@@ -20,6 +20,11 @@ mailbox actions after deletion) grey out.
 |--------|:----------:|:---------:|:--------:|
 | Stop sharing the OneDrive (remove every sharing link/grant) | ✓ | ✓ | ✓ |
 | Notify manager of owned artifacts (fallback: service desk) | ✓ | ✓ | ✓ |
+| Disable owned devices (block sign-in, reversible) | ✓ | ✓ | ✓ |
+| Delete owned devices (remove the device object) | ✓ | ✓ | ✓ |
+| Disable Power Platform objects (stop flows, quarantine apps) † | ✓ | ✓ | ✓ |
+| Delete Power Platform objects (flows & canvas apps) † | ✓ | ✓ | ✓ |
+| Re-own Power Platform objects to the manager † | ✓ | ✓ | ✓ |
 | Revoke sign-in / refresh tokens | ✓ | ✓ | - |
 | Set an auto-reply on the mailbox | ✓ | ✓ | - |
 | Add a mailbox forward (inbox rule) | ✓ | ✓ | - |
@@ -27,6 +32,11 @@ mailbox actions after deletion) grey out.
 | Remove directly assigned licences | ✓ | - | - |
 | Remove group memberships | ✓ | - | - |
 | Soft delete the account (always runs last) | ✓ | - | - |
+
+† **Power Platform actions** act on the flows and canvas apps a user owns. There
+is no Graph permission for them, so they stay greyed out until an admin authorises
+the tool as a Power Platform admin once (`New-PowerAppManagementApp`; the Actions
+tab shows the exact command). See [docs/permissions.md](docs/permissions.md).
 
 For **delete**, you choose **soft** (acts when the user hits the recycle bin) or
 **hard** (acts once the user is permanently deleted - at the latest one day

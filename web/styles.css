@@ -149,6 +149,29 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
 .matrix .opt label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
 .disabled-cell { opacity: .35; }
 
+/* Power Platform group (collapsible, greyed until authorised) */
+.matrix tr.group-row td { background: var(--bg-subtle, #f5f7fa); cursor: pointer; user-select: none; }
+.matrix tr.group-row.locked td { opacity: .75; }
+.matrix tr.group-row .pp-caret { display: inline-block; width: 1em; color: var(--muted); }
+.matrix tr.group-row .pp-help-btn { margin-left: 8px; padding: 1px 8px; font-size: 12px; }
+.matrix tr.pp-row.locked { opacity: .5; }
+.matrix tr.pp-row td.feat-name { padding-left: 22px; }
+
+/* Code block (setup commands) - theme-aware so it stays readable in light/dark */
+.code-block-wrap { position: relative; }
+.code-block {
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 14px; margin: 8px 0; overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.6; white-space: pre-wrap;
+}
+.code-block code { color: inherit; background: none; font: inherit; }
+.copy-btn { position: absolute; top: 6px; right: 6px; padding: 2px 10px; font-size: 12px; }
+.pp-recheck-row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+.pp-recheck-row .status.ok { color: var(--ok); }
+.pp-recheck-row .status.err { color: var(--warn); }
+
 /* Pills */
 .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); }
 .pill.disable { color: var(--warn); border-color: var(--warn); }

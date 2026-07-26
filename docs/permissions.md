@@ -23,6 +23,7 @@ running tool never uses keys.)
 | `User.DeleteRestore.All` | Soft delete inactive users. |
 | `Directory.Read.All` | Directory recycle bin, `/users` subscription, exclusion-group membership. |
 | `GroupMember.ReadWrite.All` | Remove inactive users from their groups. |
+| `Device.ReadWrite.All` | Disable and/or delete the Entra devices a departing user owns. |
 | `AuditLog.Read.All` | Read `signInActivity` for inactive-user detection. **Also requires an Entra ID P1 licence** on the tenant. |
 | `Sites.FullControl.All` | Enumerate and delete sharing permissions on any user's OneDrive. |
 | `MailboxSettings.ReadWrite` | Set the auto-reply and create the forwarding inbox rule. |
@@ -39,12 +40,39 @@ matching permission:
   still be needed at the disable trigger).
 - No soft delete at any trigger → drop `User.DeleteRestore.All`.
 - No group removal at any trigger → drop `GroupMember.ReadWrite.All`.
+- No device disable/delete at any trigger → drop `Device.ReadWrite.All`.
 - No token revocation/licence removal and you only act at delete →
   `User.Read.All` suffices instead of `User.ReadWrite.All`.
 
 Note on soft-deleting users: accounts holding privileged directory roles cannot
 be deleted by an app with these permissions alone - that is a Graph safeguard,
 and such deletions will show as errors in the activity log.
+
+## Power Platform actions (no Graph permission)
+
+The **Disable / Delete / Re-own Power Platform objects** actions operate on the
+cloud flows and canvas apps a user owns, through the Power Platform *admin* REST
+APIs (`api.bap.microsoft.com`, `api.flow.microsoft.com`, `api.powerapps.com`).
+There is **no Microsoft Graph app role** for this, and consenting Graph
+permissions does nothing here. Instead an admin authorises the managed identity
+as a Power Platform management application **once**, from a PowerShell session
+signed in as a Power Platform / Global Administrator:
+
+```powershell
+Install-Module -Name "Microsoft.PowerApps.Administration.PowerShell"
+Add-PowerAppsAccount
+New-PowerAppManagementApp -ApplicationId "<managed-identity-app-id>"
+```
+
+The exact app id is shown in the admin web app (Actions tab -> "Power Platform
+actions" -> "How to enable"). Until this is done the tool cannot reach the admin
+APIs, so those actions stay greyed out in the web app and cannot be enabled.
+
+Apps have no enable/disable flag, so "disable" quarantines the app: a quarantined
+app **cannot be opened or played by anyone** (the owner included).
+Flow re-own adds the manager as a **co-owner** because a
+flow's original owner cannot be reassigned; app re-own is a true ownership
+transfer.
 
 ## Mail sending: Exchange Online RBAC for Applications (scoped)
 

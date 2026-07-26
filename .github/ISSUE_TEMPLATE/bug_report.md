@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible DriftMaester bug
+about: Report a reproducible M365AutoRevocate bug
 labels: bug
 ---
 
@@ -8,9 +8,9 @@ labels: bug
 Describe the problem.
 
 ## Environment
-- DriftMaester version:
+- M365AutoRevocate version:
 - Azure region:
-- Frequency and schedule settings:
+- Config settings:
 
 ## Reproduction
 1. 
@@ -24,7 +24,7 @@ What should happen.
 What happened instead.
 
 ## Logs / evidence
-Share relevant installer/runbook output and error messages.
+Share relevant installer/function output and error messages.
 
 ## Impact
 Explain operational or security impact.

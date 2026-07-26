@@ -75,6 +75,7 @@ function Update-ARSnapshotUsers {
         $reqs.Add(@{ id = "m$i"; url = "/users/$uid/manager?`$select=id,userPrincipalName,mail,accountEnabled" })
         $reqs.Add(@{ id = "d$i"; url = "/users/$uid/drive?`$select=id,webUrl" })
         $reqs.Add(@{ id = "o$i"; url = "/users/$uid/ownedObjects?`$select=id,displayName&`$top=100" })
+        $reqs.Add(@{ id = "v$i"; url = "/users/$uid/ownedDevices/microsoft.graph.device?`$select=id,displayName,deviceId,accountEnabled,operatingSystem&`$top=100" })
     }
     $resp = Invoke-ARGraphBatch -Requests $reqs
 
@@ -124,6 +125,30 @@ function Update-ARSnapshotUsers {
                 else { $props.OwnedObjects = $json }
                 # If the owned page itself was capped, note more may exist.
                 if ($o.body.'@odata.nextLink') { $props.OwnedTruncated = 'true' }
+            }
+        }
+
+        # Owned devices, captured so disableDevices/deleteDevices still work at the
+        # delete trigger (the user is gone, but the device objects survive).
+        $v = $resp["v$i"]
+        if ($v -and [int]$v.status -lt 400 -and $v.body.value) {
+            $deviceList = foreach ($dev in $v.body.value) {
+                [pscustomobject]@{
+                    id              = $dev.id
+                    displayName     = $dev.displayName
+                    deviceId        = $dev.deviceId
+                    accountEnabled  = $dev.accountEnabled
+                    operatingSystem = $dev.operatingSystem
+                }
+            }
+            $deviceArr = @($deviceList)
+            if ($deviceArr.Count -gt 0) {
+                $djson = ($deviceArr | ConvertTo-Json -Depth 5 -Compress)
+                # Table string properties cap at 64KB; truncate to stay writable.
+                if ($djson.Length -gt 60000) {
+                    $props.OwnedDevices = (@($deviceArr | Select-Object -First 100) | ConvertTo-Json -Depth 5 -Compress)
+                }
+                else { $props.OwnedDevices = $djson }
             }
         }
 

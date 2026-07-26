@@ -49,7 +49,7 @@ try {
         if ($raw -is [string]) { try { $raw = $raw | ConvertFrom-Json } catch { $raw = $null } }
         if ($raw) { try { $features = [pscustomobject](ConvertTo-ARSanitisedConfig -Raw $raw) } catch { Write-Warning "Preview: could not sanitise posted config, using saved: $($_.Exception.Message)" } }
     }
-    if (-not $features) { $features = Get-ARFeatureConfig }
+    if (-not $features) { $features = Get-ARFeatureConfig -Fresh }
 
     $now = [DateTimeOffset]::UtcNow
     $tables = Get-ARTableNames

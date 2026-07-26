@@ -26,6 +26,16 @@ function Get-ARFeatureCatalog {
             supports = @('inactive', 'disable', 'delete'); options = @()
         },
         [pscustomobject]@{
+            key = 'disableDevices'; label = 'Disable owned devices'
+            description = 'Block sign-in on every Entra device the user owns (reversible). Devices the user registered/joined are captured before deletion, so this still works at the delete trigger.'
+            supports = @('inactive', 'disable', 'delete'); options = @()
+        },
+        [pscustomobject]@{
+            key = 'deleteDevices'; label = 'Delete owned devices'
+            description = 'Permanently delete every Entra device the user owns (removes the device object). Devices the user registered/joined are captured before deletion, so this still works at the delete trigger.'
+            supports = @('inactive', 'disable', 'delete'); options = @()
+        },
+        [pscustomobject]@{
             key = 'revokeSessions'; label = 'Revoke sign-in / refresh tokens'
             description = 'Invalidate all of the user''s active sessions and refresh tokens.'
             supports = @('inactive', 'disable'); options = @()   # meaningless after deletion
@@ -75,6 +85,30 @@ function Get-ARFeatureCatalog {
             key = 'disableAccount'; label = 'Disable the account'
             description = 'Block sign-in by disabling the account. Only offered for inactive users (a disabled account is already disabled). Reversible.'
             supports = @('inactive'); options = @()   # a disabled/deleted account cannot be disabled again
+        },
+        # --- Power Platform group -------------------------------------------------
+        # These act on the flows and canvas apps the user owns. They need the
+        # managed identity to be authorised as a Power Platform admin (there is no
+        # Graph app role for this), so the web app keeps them grouped and greyed
+        # until access is detected. 'group'/'requiresCapability' are UI hints; the
+        # sanitiser ignores them.
+        [pscustomobject]@{
+            key = 'disablePowerPlatform'; label = 'Disable Power Platform objects'
+            description = 'Turn off the cloud flows the user owns and quarantine the canvas apps they own (reversible).'
+            supports = @('inactive', 'disable', 'delete'); options = @()
+            group = 'powerPlatform'; requiresCapability = 'powerPlatform'
+        },
+        [pscustomobject]@{
+            key = 'deletePowerPlatform'; label = 'Delete Power Platform objects'
+            description = 'Permanently delete the cloud flows and canvas apps the user owns.'
+            supports = @('inactive', 'disable', 'delete'); options = @()
+            group = 'powerPlatform'; requiresCapability = 'powerPlatform'
+        },
+        [pscustomobject]@{
+            key = 'reownPowerPlatform'; label = 'Re-own Power Platform objects'
+            description = 'Hand the cloud flows and canvas apps the user owns to their manager (service desk as fallback): apps are transferred outright, flows get the new owner added as a co-owner.'
+            supports = @('inactive', 'disable', 'delete'); options = @()
+            group = 'powerPlatform'; requiresCapability = 'powerPlatform'
         }
     )
 }

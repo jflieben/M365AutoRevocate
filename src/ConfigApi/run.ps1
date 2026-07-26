@@ -93,7 +93,28 @@ try {
         }
 
         # Capture the pre-save state so the audit entry can show old -> new.
-        $before = Get-ARFeatureConfig
+        # --- Power Platform actions require the MI to be an authorised admin ---
+        # There is no Graph app role to consent; access is granted out of band
+        # with New-PowerAppManagementApp. Refuse to enable a Power Platform action
+        # until we can actually reach the admin API, so the operator gets a clear
+        # 400 with the fix rather than a config that silently fails at runtime.
+        $ppKeys = @(Get-ARFeatureCatalog | Where-Object { $_.PSObject.Properties['group'] -and $_.group -eq 'powerPlatform' } | ForEach-Object { $_.key })
+        $ppEnabled = $false
+        foreach ($k in $ppKeys) {
+            $fk = if ($raw.features) { $raw.features.$k } else { $null }
+            if ($fk -and ([bool]$fk.atInactive -or [bool]$fk.atDisable -or [bool]$fk.atDelete)) { $ppEnabled = $true; break }
+        }
+        if ($ppEnabled) {
+            $pp = Get-ARPowerPlatformStatus -Fresh
+            if (-not $pp.accessible) {
+                Send-Json -Status 400 -Object @{ error = "Power Platform actions are enabled but the tool is not authorised in Power Platform yet. Run 'New-PowerAppManagementApp -ApplicationId ""$($pp.appId)""' (see the Power Platform setup help), then try again."; powerPlatform = $pp }
+                return
+            }
+        }
+
+        # -Fresh: read the blob, not this worker's ~60s cache, so the diff is
+        # against what is actually stored (another worker may have saved recently).
+        $before = Get-ARFeatureConfig -Fresh
         $saved = Save-ARFeatureConfig -Raw $raw
         $caller = if ($auth.Caller) { $auth.Caller } else { 'unknown' }
 
@@ -112,7 +133,14 @@ try {
     }
     else {
         $firstRun = -not (Test-ARConfigBlobExists)
-        Send-Json -Status 200 -Object @{ catalog = @(Get-ARFeatureCatalog); config = Get-ARFeatureConfig; firstRun = $firstRun; version = (Get-ARConfig).Version }
+        # -Fresh: the admin UI must reflect the current stored config, never a
+        # stale per-worker cache. On Flex Consumption a reload can land on a
+        # different worker than the one that saved, which would otherwise show the
+        # pre-save values (e.g. dry-run still ON) for up to the cache TTL.
+        # ppRecheck bypasses the ~10 min Power Platform access cache so the setup
+        # help's "Re-check access now" button reflects a just-granted authorisation.
+        $ppFresh = [bool]($Request.Query -and $Request.Query['ppRecheck'])
+        Send-Json -Status 200 -Object @{ catalog = @(Get-ARFeatureCatalog); config = (Get-ARFeatureConfig -Fresh); firstRun = $firstRun; version = (Get-ARConfig).Version; powerPlatform = (Get-ARPowerPlatformStatus -Fresh:$ppFresh) }
     }
 }
 catch {

@@ -10,6 +10,7 @@
     { "resource": "graph", "value": "User.DeleteRestore.All", "reason": "soft delete inactive users" },
     { "resource": "graph", "value": "Directory.Read.All", "reason": "directory recycle bin, subscription on /users, exclusion group members" },
     { "resource": "graph", "value": "GroupMember.ReadWrite.All", "reason": "remove inactive users from groups" },
+    { "resource": "graph", "value": "Device.ReadWrite.All", "reason": "disable and/or delete the Entra devices a departing user owns" },
     { "resource": "graph", "value": "AuditLog.Read.All", "reason": "signInActivity for inactive-user detection (needs Entra ID P1)" },
     { "resource": "graph", "value": "Sites.FullControl.All", "reason": "unshare any OneDrive (Graph side)" },
     { "resource": "graph", "value": "MailboxSettings.ReadWrite", "reason": "auto-reply and inbox forward rule" },

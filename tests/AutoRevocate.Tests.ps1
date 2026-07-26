@@ -136,11 +136,70 @@ Describe 'Feature catalog trigger scope' {
             $s | Should -Contain 'disable'
         }
     }
+    It 'device actions support inactive, disable AND delete' {
+        foreach ($k in 'disableDevices', 'deleteDevices') {
+            $s = (Get-ARFeatureCatalog | Where-Object key -eq $k).supports
+            $s | Should -Contain 'inactive'
+            $s | Should -Contain 'disable'
+            $s | Should -Contain 'delete'
+        }
+    }
+    It 'Power Platform actions support inactive, disable AND delete and are grouped' {
+        foreach ($k in 'disablePowerPlatform', 'deletePowerPlatform', 'reownPowerPlatform') {
+            $f = (Get-ARFeatureCatalog | Where-Object key -eq $k)
+            $f.supports | Should -Contain 'inactive'
+            $f.supports | Should -Contain 'disable'
+            $f.supports | Should -Contain 'delete'
+            $f.group | Should -Be 'powerPlatform'
+            $f.requiresCapability | Should -Be 'powerPlatform'
+        }
+    }
+    It 'ranks the device actions directly under Notify manager' {
+        $keys = (Get-ARFeatureCatalog).key
+        $idxNotify = [array]::IndexOf($keys, 'notifyManager')
+        $keys[$idxNotify + 1] | Should -Be 'disableDevices'
+        $keys[$idxNotify + 2] | Should -Be 'deleteDevices'
+    }
     It 'forces disableAccount off at unsupported triggers' {
         $c = ConvertTo-ARSanitisedConfig -Raw ([pscustomobject]@{ features = [pscustomobject]@{ disableAccount = [pscustomobject]@{ atInactive = $true; atDisable = $true; atDelete = $true } } })
         $c.features.disableAccount.atInactive | Should -BeTrue
         $c.features.disableAccount.atDisable | Should -BeFalse
         $c.features.disableAccount.atDelete | Should -BeFalse
+    }
+    It 'keeps Power Platform action flags through the sanitiser' {
+        $c = ConvertTo-ARSanitisedConfig -Raw ([pscustomobject]@{ features = [pscustomobject]@{ reownPowerPlatform = [pscustomobject]@{ atDelete = $true } } })
+        $c.features.reownPowerPlatform.atDelete | Should -BeTrue
+        $c.features.reownPowerPlatform.atInactive | Should -BeFalse
+    }
+}
+
+Describe 'Power Platform summary lines (email)' {
+    It 'names disabled flows and apps' {
+        $summary = [pscustomobject]@{ Action = 'disable'; Total = 2; Succeeded = 2; Skipped = 0; Errors = 0; DryRun = $false
+            Items = @([pscustomobject]@{ Kind = 'flow'; Name = 'Nightly sync'; Result = 'disabled' }, [pscustomobject]@{ Kind = 'app'; Name = 'Expenses'; Result = 'disabled' }) }
+        $lines = Get-ARPowerPlatformSummaryLines -Verb 'disable' -PastVerb 'disabled' -Summary $summary -Dry $false -Prefix ''
+        ($lines -join ' ') | Should -Match "Nightly sync"
+        ($lines -join ' ') | Should -Match "Expenses"
+    }
+    It 'reports nothing to do when the user owns no objects' {
+        $summary = [pscustomobject]@{ Action = 'delete'; Total = 0; Succeeded = 0; Skipped = 0; Errors = 0; DryRun = $false; Items = @() }
+        $lines = Get-ARPowerPlatformSummaryLines -Verb 'delete' -PastVerb 'deleted' -Summary $summary -Dry $false -Prefix ''
+        ($lines -join ' ') | Should -Match 'No owned Power Platform'
+    }
+}
+
+Describe 'Disable-ARPowerPlatformObjects (skip logic)' {
+    BeforeAll { Mock -ModuleName AutoRevocate Get-ARConfig { [pscustomobject]@{ DryRun = $true } } }
+    It 'skips an already-quarantined app and an already-stopped flow, but would disable a running flow' {
+        $objs = @(
+            [pscustomobject]@{ Kind = 'app'; EnvironmentId = 'e'; Id = 'a1'; Name = 'App1'; State = 'Quarantined' },
+            [pscustomobject]@{ Kind = 'flow'; EnvironmentId = 'e'; Id = 'f1'; Name = 'Flow1'; State = 'Stopped' },
+            [pscustomobject]@{ Kind = 'flow'; EnvironmentId = 'e'; Id = 'f2'; Name = 'Flow2'; State = 'Started' }
+        )
+        $r = Disable-ARPowerPlatformObjects -Objects $objs
+        $r.Total | Should -Be 3
+        $r.Skipped | Should -Be 2
+        $r.Succeeded | Should -Be 1   # dry-run: the running flow is counted as would-disable
     }
 }
 

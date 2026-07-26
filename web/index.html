@@ -346,6 +346,28 @@
     </div>
   </div>
 
+  <!-- Power Platform setup help -->
+  <div id="ppHelpModal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-labelledby="ppHelpTitle">
+      <div class="modal-head">
+        <h2 id="ppHelpTitle">Enable Power Platform actions</h2>
+        <button id="ppHelpClose" class="btn ghost" type="button">Close</button>
+      </div>
+      <p class="muted">These actions disable, delete or re-own the flows and canvas apps a departing user owns. There is no Graph permission for this, so you authorise this tool as a Power Platform admin once, from a PowerShell session signed in as a Power Platform / Global Administrator:</p>
+      <div class="code-block-wrap">
+        <button id="ppHelpCopy" class="btn ghost copy-btn" type="button">Copy</button>
+        <pre class="code-block"><code id="ppHelpCommands"></code></pre>
+      </div>
+      <p class="muted">After running these it usually works within a minute. Use the button below to check right away instead of waiting.</p>
+      <div class="pp-recheck-row">
+        <button id="ppHelpRecheck" class="btn primary" type="button">Re-check access now</button>
+        <span id="ppHelpStatus" class="status" role="status"></span>
+      </div>
+      <p class="muted">This grants the tool tenant-wide Power Platform admin access, so only tick the actions you actually want.</p>
+      <p><a id="ppHelpDocs" href="https://learn.microsoft.com/en-us/power-platform/admin/powerapps-powershell" target="_blank" rel="noopener">Microsoft docs: PowerShell for Power Platform</a></p>
+    </div>
+  </div>
+
   <!-- Welcome tour callout -->
   <div id="tour" class="tour" hidden>
     <div id="tourBox" class="callout">

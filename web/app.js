@@ -52,6 +52,9 @@
   var initPromise = msalInstance.initialize();
   var loginRequest = { scopes: [CFG.apiScope] };
   var catalog = [];
+  var ppStatus = null;      // Power Platform admin access { accessible, appId, ... }
+  var ppGroupOpen = false;  // collapsed by default (shows a single line)
+  var lastConfig = null;    // last config rendered into the matrix (for in-place PP refresh)
 
   function setAccount(acc) { if (acc) { msalInstance.setActiveAccount(acc); } }
 
@@ -103,30 +106,78 @@
     return '<div class="opt"><label for="' + id + '">' + esc(opt.label) + "</label>" + control + "</div>";
   }
 
-  function checkboxCell(featKey, trig, supports, checked) {
+  function checkboxCell(featKey, trig, supports, checked, locked) {
     var supported = supports.indexOf(trig) !== -1;
+    var disabled = !supported || locked;
     var cls = supported ? "" : ' class="disabled-cell"';
-    var attrs = supported ? "" : " disabled";
-    var title = supported ? "" : ' title="Not possible at this stage"';
+    var attrs = disabled ? " disabled" : "";
+    var title = !supported ? ' title="Not possible at this stage"'
+      : (locked ? ' title="Authorise Power Platform access first"' : "");
     return "<td" + cls + ' style="text-align:center"><input type="checkbox" data-feat="' + featKey +
       '" data-trig="' + trig + '"' + (checked ? " checked" : "") + attrs + title + "></td>";
   }
 
   function trigProp(trig) { return "at" + trig.charAt(0).toUpperCase() + trig.slice(1); }
 
+  function featureRowHtml(f, config, locked) {
+    var fc = (config.features && config.features[f.key]) || {};
+    var cls = (f.group === "powerPlatform") ? (' class="pp-row' + (locked ? " locked" : "") + '"') : "";
+    var row = "<tr" + cls + "><td class='feat-name'>" + esc(f.label) +
+      "<div class='feat-desc'>" + esc(f.description) + "</div>";
+    (f.options || []).forEach(function (o) { row += optInput(f.key, o); });
+    row += "</td>";
+    TRIGGERS.forEach(function (t) { row += checkboxCell(f.key, t, f.supports, !!fc[trigProp(t)], locked); });
+    return row + "</tr>";
+  }
+
+  // Power Platform actions are rendered as a collapsible group that is greyed
+  // until the managed identity is authorised (ppStatus.accessible). The header
+  // row expands/collapses the group and offers the "How to enable" help.
+  function powerPlatformGroupHtml(ppFeatures, config) {
+    var accessible = !!(ppStatus && ppStatus.accessible);
+    var locked = !accessible;
+    // When authorised, drop the "ready" pill and "How to enable" button - the
+    // group just behaves like any other. They only appear while setup is needed.
+    var badge = accessible ? "" : ' <span class="pill warnp">setup required</span>';
+    var help = accessible ? "" : ' <button type="button" class="btn ghost pp-help-btn">How to enable</button>';
+    var caret = '<span class="pp-caret" aria-hidden="true">&#9656;</span>';
+    var head = "<tr class='group-row" + (locked ? " locked" : "") + "'><td colspan='4'>" +
+      caret + " <strong>Power Platform actions</strong>" + badge + help +
+      "<div class='feat-desc'>Disable, delete or re-own the cloud flows and canvas apps a user owns." +
+      (locked ? " Authorise this tool as a Power Platform admin to switch these on." : "") + "</div></td></tr>";
+    var body = ppFeatures.map(function (f) { return featureRowHtml(f, config, locked); }).join("");
+    return head + body;
+  }
+
+  function togglePowerPlatformGroup(forceOpen) {
+    ppGroupOpen = (forceOpen != null) ? forceOpen : !ppGroupOpen;
+    Array.prototype.forEach.call(document.querySelectorAll("#featureRows .pp-row"), function (r) { r.hidden = !ppGroupOpen; });
+    var caret = document.querySelector("#featureRows .pp-caret");
+    if (caret) { caret.innerHTML = ppGroupOpen ? "&#9662;" : "&#9656;"; }
+  }
+
+  // Rebuild just the Power Platform group in place (header + rows) from the last
+  // rendered config, so a successful re-check ungreys it WITHOUT a full matrix
+  // re-render that would discard the operator's other unsaved edits.
+  function refreshPowerPlatformSection() {
+    var tbody = el("featureRows");
+    if (!tbody) { return; }
+    Array.prototype.forEach.call(tbody.querySelectorAll(".group-row, .pp-row"), function (r) { r.parentNode.removeChild(r); });
+    var ppFeatures = catalog.filter(function (f) { return f.group === "powerPlatform"; });
+    if (!ppFeatures.length) { return; }
+    tbody.insertAdjacentHTML("beforeend", powerPlatformGroupHtml(ppFeatures, lastConfig || { features: {} }));
+    togglePowerPlatformGroup(true);   // expand so the now-enabled actions are visible
+  }
+
   function renderMatrix(cat, config) {
     catalog = cat;
-    var rows = "";
-    cat.forEach(function (f) {
-      var fc = (config.features && config.features[f.key]) || {};
-      rows += "<tr><td class='feat-name'>" + esc(f.label) +
-        "<div class='feat-desc'>" + esc(f.description) + "</div>";
-      (f.options || []).forEach(function (o) { rows += optInput(f.key, o); });
-      rows += "</td>";
-      TRIGGERS.forEach(function (t) { rows += checkboxCell(f.key, t, f.supports, !!fc[trigProp(t)]); });
-      rows += "</tr>";
-    });
+    lastConfig = config;
+    var normal = cat.filter(function (f) { return f.group !== "powerPlatform"; });
+    var ppFeatures = cat.filter(function (f) { return f.group === "powerPlatform"; });
+    var rows = normal.map(function (f) { return featureRowHtml(f, config, false); }).join("");
+    if (ppFeatures.length) { rows += powerPlatformGroupHtml(ppFeatures, config); }
     el("featureRows").innerHTML = rows;
+    togglePowerPlatformGroup(false);   // start collapsed: a single "Power Platform actions" line
     // First render: swap the loading spinner for the table and enable Preview.
     if (el("matrixLoading")) { el("matrixLoading").hidden = true; }
     if (el("matrixWrap")) { el("matrixWrap").hidden = false; }
@@ -251,6 +302,60 @@
   }
 
   function closePreview() { el("previewModal").hidden = true; }
+
+  /* ---------- Power Platform setup help ---------- */
+  function openPpHelp() {
+    var appId = (ppStatus && ppStatus.appId) ? ppStatus.appId : "<managed-identity-app-id>";
+    el("ppHelpCommands").textContent =
+      'Install-Module -Name "Microsoft.PowerApps.Administration.PowerShell"\n' +
+      'Add-PowerAppsAccount\n' +
+      'New-PowerAppManagementApp -ApplicationId "' + appId + '"';
+    var st = el("ppHelpStatus"); if (st) { st.textContent = ""; st.className = "status"; }
+    var rc = el("ppHelpRecheck"); if (rc) { rc.disabled = false; rc.textContent = "Re-check access now"; }
+    var cp = el("ppHelpCopy"); if (cp) { cp.textContent = "Copy"; }
+    el("ppHelpModal").hidden = false;
+  }
+  function closePpHelp() { el("ppHelpModal").hidden = true; }
+
+  function copyPpCommands() {
+    var text = el("ppHelpCommands").textContent;
+    var btn = el("ppHelpCopy");
+    function done(ok) { btn.textContent = ok ? "Copied!" : "Press Ctrl+C"; setTimeout(function () { btn.textContent = "Copy"; }, 1800); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+    } else {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(ta); done(ok);
+      } catch (e) { done(false); }
+    }
+  }
+
+  // Probe Power Platform access right now (server does a fresh, cache-bypassing
+  // check) so the operator does not have to wait/refresh after authorising. On
+  // success the group ungreys immediately and can be configured.
+  function recheckPowerPlatform() {
+    var rc = el("ppHelpRecheck"), st = el("ppHelpStatus");
+    rc.disabled = true; rc.textContent = "Checking\u2026"; st.textContent = ""; st.className = "status";
+    api("/config?ppRecheck=1").then(function (d) {
+      if (d.powerPlatform) { ppStatus = d.powerPlatform; }
+      if (ppStatus && ppStatus.accessible) {
+        st.textContent = "Access detected. Power Platform actions are now available."; st.className = "status ok";
+        refreshPowerPlatformSection();
+        setTimeout(closePpHelp, 1400);
+      } else {
+        var why = (ppStatus && ppStatus.error) ? (" (" + ppStatus.error + ")") : "";
+        st.textContent = "Not detected yet" + why + ". If you just ran the command, give it a moment and try again."; st.className = "status err";
+        rc.disabled = false; rc.textContent = "Re-check access now";
+      }
+    }).catch(function (e) {
+      st.textContent = e.message; st.className = "status err";
+      rc.disabled = false; rc.textContent = "Re-check access now";
+    });
+  }
 
   function gather() {
     var features = {};
@@ -412,6 +517,7 @@
 
   function renderStatus(d) {
     renderBanners(d);
+    if (d.powerPlatform) { ppStatus = d.powerPlatform; }
     if (el("appVersion") && d.version) {
       var vtxt = "v" + d.version;
       if (d.versionCheck && d.versionCheck.updateAvailable && d.versionCheck.latest) {
@@ -590,6 +696,7 @@
         el("wizard").hidden = true;
         renderMatrix(d.catalog, d.config);
         activateTab("actions");
+        loadStatus();   // refresh banners (e.g. drop the dry-run banner if turned off)
         startTour();
       }).catch(function (e) {
         err.textContent = e.message;
@@ -656,6 +763,7 @@
   /* ---------- actions ---------- */
   function loadConfig() {
     return api("/config").then(function (d) {
+      if (d.powerPlatform) { ppStatus = d.powerPlatform; }
       renderMatrix(d.catalog, d.config);
       if (d.firstRun) { showWizard(d.config); }
     });
@@ -678,6 +786,7 @@
     api("/config", "POST", gather()).then(function (d) {
       renderMatrix(d.catalog, d.config);
       setSaveStatus("Saved.", "ok");
+      loadStatus();   // refresh banners so the dry-run/paused state updates at once
     }).catch(function (e) {
       setSaveStatus(e.message, "err");
     }).finally(function () {
@@ -709,7 +818,23 @@
     el("previewBtn").onclick = openPreview;
     el("previewClose").onclick = closePreview;
     el("previewModal").addEventListener("click", function (e) { if (e.target === el("previewModal")) { closePreview(); } });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !el("previewModal").hidden) { closePreview(); } });
+    el("ppHelpClose").onclick = closePpHelp;
+    el("ppHelpCopy").onclick = copyPpCommands;
+    el("ppHelpRecheck").onclick = recheckPowerPlatform;
+    el("ppHelpModal").addEventListener("click", function (e) { if (e.target === el("ppHelpModal")) { closePpHelp(); } });
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") { return; }
+      if (!el("previewModal").hidden) { closePreview(); }
+      if (!el("ppHelpModal").hidden) { closePpHelp(); }
+    });
+    // Power Platform group: header row expands/collapses; "How to enable" opens
+    // the authorise-the-MI help.
+    el("featureRows").addEventListener("click", function (e) {
+      var help = e.target.closest ? e.target.closest(".pp-help-btn") : null;
+      if (help) { e.stopPropagation(); openPpHelp(); return; }
+      var gr = e.target.closest ? e.target.closest(".group-row") : null;
+      if (gr) { togglePowerPlatformGroup(); }
+    });
     // Confirmation friction: enabling an irreversible action spells out the
     // blast radius before it can be ticked.
     el("featureRows").addEventListener("change", function (e) {
@@ -718,7 +843,9 @@
       var destructive = {
         softDeleteUser: "soft-delete the account (move it to the recycle bin)",
         removeFromGroups: "remove the user from every group they belong to",
-        removeLicenses: "remove all of the user's directly-assigned licences"
+        removeLicenses: "remove all of the user's directly-assigned licences",
+        deleteDevices: "permanently delete every Entra device the user owns",
+        deletePowerPlatform: "permanently delete every cloud flow and canvas app the user owns"
       };
       var what = destructive[cb.dataset.feat];
       if (what && !window.confirm("Enable an irreversible action?\n\nThis will " + what +
