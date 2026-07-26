@@ -7,6 +7,20 @@ function ConvertTo-ARHtmlEncoded {
     return [System.Net.WebUtility]::HtmlEncode($Text)
 }
 
+function Get-ARToolName {
+    <#
+    .SYNOPSIS
+        The display name used in email bodies. Configurable (behaviour config) so
+        IT can make the messages recognisable to managers; falls back to the
+        product name.
+    #>
+    [CmdletBinding()] param()
+    $name = ''
+    try { $name = "$((Get-ARFeatureConfig).toolName)".Trim() } catch { }
+    if (-not $name) { $name = 'M365AutoRevocate' }
+    return $name
+}
+
 function Get-ARActionSummaryLines {
     <#
     .SYNOPSIS
@@ -74,7 +88,7 @@ function Get-ARActionSummaryLines {
 
 function Get-ARNotificationHtml {
     [CmdletBinding()]
-    param($DeletedUpn, $DeletedDisplayName, $DeletedUserId, $Trigger, $EventDescription, $OneDrive, $Artifacts, $Recipient, $Actions)
+    param($DeletedUpn, $DeletedDisplayName, $DeletedUserId, $Trigger, $EventDescription, $OneDrive, $Artifacts, $Recipient, $Actions, [string]$ToolName = 'M365AutoRevocate')
 
     # Neutral, trigger-aware opening: the tool REACTS to these events, it does not
     # cause the inactivity/disable/deletion, so never phrase it as if it did.
@@ -129,12 +143,10 @@ function Get-ARNotificationHtml {
     if ($Artifacts -and $Artifacts.Count -gt 0) {
         [void]$sb.Append('<table style="border-collapse:collapse;margin:4px 0" border="0">')
         [void]$sb.Append('<tr style="text-align:left"><th style="padding:4px 16px 4px 0;border-bottom:1px solid #edebe9">Type</th>' +
-                         '<th style="padding:4px 16px 4px 0;border-bottom:1px solid #edebe9">Name</th>' +
-                         '<th style="padding:4px 0;border-bottom:1px solid #edebe9">Detail</th></tr>')
+                         '<th style="padding:4px 0;border-bottom:1px solid #edebe9">Name</th></tr>')
         foreach ($a in $Artifacts) {
             [void]$sb.Append('<tr><td style="padding:4px 16px 4px 0">' + (ConvertTo-ARHtmlEncoded $a.Type) +
-                             '</td><td style="padding:4px 16px 4px 0">' + (ConvertTo-ARHtmlEncoded $a.DisplayName) +
-                             '</td><td style="padding:4px 0">' + (ConvertTo-ARHtmlEncoded $a.Detail) + '</td></tr>')
+                             '</td><td style="padding:4px 0">' + (ConvertTo-ARHtmlEncoded $a.DisplayName) + '</td></tr>')
         }
         [void]$sb.Append('</table>')
         [void]$sb.Append('<p style="color:#605e5c">These objects may now be orphaned (e.g. groups/teams/apps with no other owner). ' +
@@ -150,8 +162,7 @@ function Get-ARNotificationHtml {
     }
 
     [void]$sb.Append('<hr style="border:none;border-top:1px solid #edebe9;margin:16px 0">')
-    [void]$sb.Append('<p style="color:#8a8886;font-size:12px">Automated message from M365AutoRevocate. ' +
-                     'No reply is required.</p>')
+    [void]$sb.Append('<p style="color:#8a8886;font-size:12px">Automated message from ' + (ConvertTo-ARHtmlEncoded $ToolName) + '.</p>')
     [void]$sb.Append('</div>')
     return $sb.ToString()
 }
@@ -164,12 +175,13 @@ function Send-ARAlertMail {
     #>
     [CmdletBinding()] param([Parameter(Mandatory)][string]$To, [Parameter(Mandatory)][string]$Subject, [string[]]$Issues)
     $cfg = Get-ARConfig
+    $tool = ConvertTo-ARHtmlEncoded (Get-ARToolName)
     $items = ($Issues | ForEach-Object { '<li>' + (ConvertTo-ARHtmlEncoded $_) + '</li>' }) -join ''
     $html = '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#201f1e;max-width:640px">' +
-        '<p>M365AutoRevocate detected the following health issue(s):</p><ul>' + $items + '</ul>' +
+        "<p>$tool detected the following health issue(s):</p><ul>" + $items + '</ul>' +
         '<p>Open the admin web app <strong>Diagnostics</strong> tab for detail.</p>' +
         '<hr style="border:none;border-top:1px solid #edebe9;margin:16px 0">' +
-        '<p style="color:#8a8886;font-size:12px">Automated health alert from M365AutoRevocate.</p></div>'
+        "<p style=`"color:#8a8886;font-size:12px`">Automated health alert from $tool.</p></div>"
     $body = @{
         message         = @{ subject = $Subject; body = @{ contentType = 'HTML'; content = $html }; toRecipients = @(@{ emailAddress = @{ address = $To } }) }
         saveToSentItems = $false
@@ -198,7 +210,7 @@ function Send-ARNotificationMail {
     }
     $subject = "Offboarding cleanup: $DeletedDisplayName ($state)"
     $html    = Get-ARNotificationHtml -DeletedUpn $DeletedUpn -DeletedDisplayName $DeletedDisplayName `
-        -DeletedUserId $DeletedUserId -Trigger $Trigger -EventDescription $EventDescription -OneDrive $OneDrive -Artifacts $Artifacts -Recipient $Recipient -Actions $Actions
+        -DeletedUserId $DeletedUserId -Trigger $Trigger -EventDescription $EventDescription -OneDrive $OneDrive -Artifacts $Artifacts -Recipient $Recipient -Actions $Actions -ToolName (Get-ARToolName)
 
     if ($cfg.DryRun) {
         Write-Host "[DryRun] Would send '$subject' to $($Recipient.Email) ($($Recipient.Kind))."

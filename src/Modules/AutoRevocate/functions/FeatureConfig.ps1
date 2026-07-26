@@ -104,6 +104,9 @@ function Get-ARDefaultConfig {
         mode                 = $mode
         dryRun               = $true    # fail SAFE on a brand-new install: simulate until the operator turns it off in the wizard/config
         servicedeskEmail     = ([Environment]::GetEnvironmentVariable('AR_SERVICEDESK_EMAIL'))
+        # Name shown in email bodies (e.g. "Automated message from <toolName>"), so
+        # IT can make the messages recognisable to managers.
+        toolName             = 'M365AutoRevocate'
         logRetentionDays     = 365
         allowExternalForward = $false
         inactive             = [ordered]@{ enabled = $false; thresholdDays = 90; exclusionGroupId = ''; exclusionGroupName = ''; excludeSharedMailboxes = $true }
@@ -245,10 +248,17 @@ function ConvertTo-ARSanitisedConfig {
     # are unconditional; only the email is governed here.
     $notifyVersion = if ($null -ne $Raw.versionCheck -and $null -ne $Raw.versionCheck.notifyServicedesk) { [bool]$Raw.versionCheck.notifyServicedesk } else { $true }
 
+    # Email display name: empty falls back to the product name; capped so it can't
+    # blow up an email header/footer.
+    $toolName = "$($Raw.toolName)".Trim()
+    if (-not $toolName) { $toolName = 'M365AutoRevocate' }
+    if ($toolName.Length -gt 60) { $toolName = $toolName.Substring(0, 60).Trim() }
+
     return [ordered]@{
         mode                 = $mode
         dryRun               = $dryRun
         servicedeskEmail     = $servicedesk
+        toolName             = $toolName
         logRetentionDays     = $retention
         allowExternalForward = [bool]($Raw.allowExternalForward)
         inactive             = $inactive

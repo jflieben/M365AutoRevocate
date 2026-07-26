@@ -92,6 +92,11 @@
             <small>Used when a user has no active manager.</small>
           </label>
           <label class="field">
+            <span>Tool name in emails</span>
+            <input id="toolName" type="text" maxlength="60" placeholder="M365AutoRevocate" />
+            <small>Shown in the emails sent to managers and the service desk (e.g. "Automated message from &lt;name&gt;"). Set it to something your managers recognise. Blank uses the default.</small>
+          </label>
+          <label class="field">
             <span>Keep activity log (days)</span>
             <input id="logRetentionDays" type="number" min="7" max="3650" step="1" />
             <small>Older entries are removed automatically every week. Minimum 7.</small>

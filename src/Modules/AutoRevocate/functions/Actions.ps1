@@ -106,12 +106,18 @@ function Find-ARUserOneDrive {
     }
 }
 
+# Owned-object types that are directory config objects a manager can never
+# reassign or decommission, so they are only noise in the hand-off email and are
+# dropped from the artifact list. Add more here if others show up.
+$script:ARIgnoredOwnedTypes = @('tokenLifetimePolicy')
+
 function Get-ARUserArtifacts {
     <#
     .SYNOPSIS
         Lists artifacts the user still owns. At 'disable' this is read live from
         Graph; at 'delete' it comes from the directory snapshot (Graph has
-        dropped ownership by then).
+        dropped ownership by then). Directory config objects that a manager cannot
+        act on (see $ARIgnoredOwnedTypes) are filtered out.
     #>
     [CmdletBinding()] param([string]$UserId, $CacheEntry, [string]$Trigger = 'delete')
     $list = [System.Collections.Generic.List[object]]::new()
@@ -120,10 +126,9 @@ function Get-ARUserArtifacts {
         try {
             $owned = Invoke-ARGraph -Uri ('/users/' + $UserId + '/ownedObjects?$select=id,displayName') -All
             foreach ($o in $owned) {
-                $list.Add([pscustomobject]@{
-                        Type        = ($o.'@odata.type' -replace '#microsoft\.graph\.', '')
-                        DisplayName = $o.displayName; Id = $o.id; Detail = ''
-                    })
+                $type = ($o.'@odata.type' -replace '#microsoft\.graph\.', '')
+                if ($type -in $script:ARIgnoredOwnedTypes) { continue }
+                $list.Add([pscustomobject]@{ Type = $type; DisplayName = $o.displayName; Id = $o.id })
             }
             return $list
         }
@@ -134,7 +139,8 @@ function Get-ARUserArtifacts {
     if ($ownedJson) {
         try {
             foreach ($o in ($ownedJson | ConvertFrom-Json)) {
-                $list.Add([pscustomobject]@{ Type = $o.type; DisplayName = $o.displayName; Id = $o.id; Detail = $o.detail })
+                if ("$($o.type)" -in $script:ARIgnoredOwnedTypes) { continue }
+                $list.Add([pscustomobject]@{ Type = $o.type; DisplayName = $o.displayName; Id = $o.id })
             }
         }
         catch { Write-Warning "Could not parse cached OwnedObjects for artifact list: $($_.Exception.Message)" }

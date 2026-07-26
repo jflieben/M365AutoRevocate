@@ -153,6 +153,5 @@ site URL from the UPN.
   new installs start this way for a safe first run. Dry-run events are still
   written to `ActivityLog`. Because it lives in the config blob, flipping it takes
   effect within the behaviour-config TTL (no restart needed).
-- The OneDrive walk is bounded (`OneDriveMaxItems`) and reports if it hit the cap.
 - The high-volume `updated` (disable) path short-circuits before any Graph call
   when no disable-actions are configured.

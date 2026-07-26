@@ -4,6 +4,22 @@ All notable changes to M365AutoRevocate are documented here. The version is the
 single source in `VERSION` (stamped into the module manifest, the `AR_VERSION`
 app setting, and the web app footer at deploy time).
 
+## 1.0.1
+- **Cloud Shell IP whitelisting.** In Azure Cloud Shell the auto-detected IP is
+  the container's Azure egress, so it asks for your IP/CIDR (and hints at it from 
+  your recent Entra sign-in logs). Auto-detect still applies elsewhere.
+- **API permissions maintained in one place and auto-reconciled.** The Graph /
+  SharePoint / Exchange app roles (and any Entra directory roles) now live in
+  `deploy/permissions.json`. Both the full deploy and updates
+  reconcile the managed identity against it
+- **Configurable tool name in emails.** A new "Tool name in emails" setting
+  (Configuration tab) replaces "M365AutoRevocate" in the messages sent to managers
+  and the service desk, so IT can make them recognisable. Defaults to the product
+  name.
+- **Cleaner hand-off email.** Dropped the always-empty "Detail" column from the
+  owned-artifacts table, and `tokenLifetimePolicy` objects (which a manager cannot
+  act on) are no longer listed.
+
 ## 1.0.0
 
 ### Features
@@ -25,7 +41,7 @@ app setting, and the web app footer at deploy time).
   in Azure Cloud Shell (PowerShell)
 - **Automatic releases.** The CI workflow publishes a GitHub release (code, web,
   installer, checksums) the first time a bumped `VERSION` reaches `main`.
-- **New optional `-Tags` parameter** to apply resource-group tags at install,
+- **New optional `-Tags` parameter** to apply resource-group tags
 
 ### Platform
 - **Function App runtime upgraded to PowerShell 7.6** (7.4 is being retired).

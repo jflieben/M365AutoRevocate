@@ -143,6 +143,7 @@
     el("mode").value = config.mode || "soft";
     el("dryRun").value = String(config.dryRun !== false);
     el("servicedeskEmail").value = config.servicedeskEmail || "";
+    el("toolName").value = config.toolName || "M365AutoRevocate";
     el("logRetentionDays").value = config.logRetentionDays || 365;
     el("allowExternalForward").value = String(!!config.allowExternalForward);
     el("versionNotify").value = String(!config.versionCheck || config.versionCheck.notifyServicedesk !== false);
@@ -269,6 +270,7 @@
       mode: el("mode").value,
       dryRun: el("dryRun").value === "true",
       servicedeskEmail: el("servicedeskEmail").value,
+      toolName: el("toolName").value,
       logRetentionDays: parseInt(el("logRetentionDays").value, 10) || 365,
       allowExternalForward: el("allowExternalForward").value === "true",
       versionCheck: { notifyServicedesk: el("versionNotify").value === "true" },

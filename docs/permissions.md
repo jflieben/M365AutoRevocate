@@ -10,6 +10,13 @@ running tool never uses keys.)
 
 ## Microsoft Graph application permissions (managed identity)
 
+> The machine-readable source of truth for every API permission (and any Entra
+> directory role) is [`deploy/permissions.json`](../deploy/permissions.json).
+> Both `Deploy-M365AutoRevocate.ps1` and `Update-M365AutoRevocate.ps1` reconcile
+> the managed identity against it and grant anything missing, so a new feature's
+> permission is added in one place and applied on the next deploy or update. The
+> table below is the human-readable explanation.
+
 | Permission | Why it is needed |
 |-----------|------------------|
 | `User.ReadWrite.All` | Read soft-deleted users, `manager`, `ownedObjects`; create the `/users` subscription; `revokeSignInSessions`; disable accounts; remove licences. |
@@ -74,21 +81,6 @@ needs **two** grants on the managed identity, which do different things:
 2. The built-in **`View-Only Recipients`** Exchange management role (tenant-wide,
    read-only), granted via **RBAC for Applications**. This **scopes** what the
    (now-accepted) token may do - here, read recipients.
-
-Both are required: #1 gets you through the door, #2 says what you may read. If
-either is missing the tool skips those users (fails closed) rather than risk
-acting on a shared mailbox, unless you turn off "exclude shared mailboxes" in the
-Configuration tab. A fresh grant can take up to ~30 minutes to take effect.
-Equivalent manual steps:
-
-```powershell
-# 1) Exchange.ManageAsApp (app role dc50a0fb-09a3-484d-be87-e023b12c6440 on the
-#    Office 365 Exchange Online SP) -> assign to the managed identity's SP, e.g.
-#    in the portal: Enterprise applications > <the MI> > Permissions, or via Graph
-#    POST /servicePrincipals/<MI-oid>/appRoleAssignments.
-# 2) The scoping role, via RBAC for Applications:
-New-ManagementRoleAssignment -App <MI-AppId> -Role 'View-Only Recipients'
-```
 
 ## Admin web app (delegated)
 

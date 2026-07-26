@@ -1,16 +1,14 @@
 # Security
 
-## The honest headline
-
 M365AutoRevocate's managed identity can **read and modify most of the tenant**:
-it can delete users, strip group memberships and licences, unshare any OneDrive,
+it can delete (non admin) users, strip group memberships and licences, unshare any OneDrive,
 change mailbox settings, and cancel calendar events. That power is inherent to
 what the tool does (offboarding cleanup on arbitrary departing users). Treat the
 admin web app and the admin security group as **Tier 0 / privileged access**:
 compromise of either is, effectively, tenant compromise.
 
 This document describes the trust boundaries, what the tool does to defend them,
-and what the operator must do.
+and what the security minded operator should do.
 
 ## Trust boundaries
 

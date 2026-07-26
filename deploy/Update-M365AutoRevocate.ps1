@@ -5,9 +5,15 @@
 
 .DESCRIPTION
     Redeploys the function code and the admin web app onto an app that is already
-    provisioned, and stamps the new version. It does NOT touch identity, RBAC,
-    Graph consent, Exchange Online, or the Entra app registration, so there are
-    no interactive prompts -- suitable for scheduled patching / CI.
+    provisioned, and stamps the new version. It also reconciles the managed
+    identity's API permissions against deploy/permissions.json (granting anything a
+    newer version added), so an update never leaves a new feature missing its
+    permission. There are still no interactive prompts -- suitable for scheduled
+    patching / CI. It does NOT touch the Exchange Online mailbox scoping or the
+    Entra app registration (those belong to the full deploy). Granting new API
+    permissions needs the caller to be Global Administrator / Privileged Role
+    Administrator; when they lack that (e.g. an unattended CI identity) the missing
+    grants are reported, not fatal.
 
     Resolves the same deterministic per-tenant resource names as the deploy
     script (from the sender domain's tenant), or you can pass -AppName /
@@ -50,6 +56,9 @@ function Get-TenantIdFromDomain {
     catch { return $null }
     return $null
 }
+
+# Shared permission reconciler (Update-ARPermission), reading deploy/permissions.json.
+. (Join-Path $PSScriptRoot 'AR.Common.ps1')
 
 # --- Version -----------------------------------------------------------------
 $moduleVersion = '1.0.0'
@@ -139,6 +148,22 @@ window.AR_AUTH = {
     Write-Host 'Web app updated.'
 }
 catch { Write-Warning "Web app update did not complete: $($_.Exception.Message) (if this is a 403/AuthorizationFailure, the web storage firewall may not allow your current IP -- add it under storage account '$webStorage' > Networking, or run from an allowed network)." }
+
+# --- Reconcile API permissions -----------------------------------------------
+# A newer version may need a permission an older deploy never granted. Grant
+# anything missing from deploy/permissions.json (idempotent; the full deploy runs
+# the same reconciler). Non-fatal if the caller lacks the rights to grant.
+Write-Step 'API permissions'
+$principalId = Get-AzScalar (Invoke-Az -AzArgs @('functionapp', 'identity', 'show', '--name', $AppName, '--resource-group', $ResourceGroup, '--query', 'principalId', '-o', 'tsv') -AllowFail)
+if ($principalId) {
+    $permFailed = @(Update-ARPermission -PrincipalId $principalId)
+    if ($permFailed.Count -gt 0) {
+        Write-Warning "Some API permissions are still missing: $($permFailed -join ', ')."
+        Write-Warning 'Re-run as Global Administrator / Privileged Role Administrator to grant them (and consent), or grant them in the portal.'
+    }
+    else { Write-Host 'API permissions are up to date.' -ForegroundColor Green }
+}
+else { Write-Warning 'Could not resolve the managed identity principal id; skipping API-permission reconciliation. Run the full deploy to be sure permissions are current.' }
 
 # --- Stamp version, sync triggers, restart -----------------------------------
 Write-Step 'Finalise'

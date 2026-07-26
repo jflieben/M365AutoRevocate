@@ -117,21 +117,12 @@ param(
 # is not offered.
 
 $ErrorActionPreference = 'Stop'
-$graphAppId = '00000003-0000-0000-c000-000000000000'   # Microsoft Graph
-# Mail SENDING is granted via Exchange Online RBAC (mailbox-scoped), NOT a
-# tenant-wide Graph Mail.Send app role. The mailbox/calendar roles below are
-# unavoidably tenant-wide because the disable actions (auto-reply, forward,
-# cancel meetings, revoke sessions) act on arbitrary departing users.
-$requiredGraphRoles = @(
-    'User.ReadWrite.All',        # deleted users, manager, ownedObjects, subscription, revokeSignInSessions, disable, licence removal
-    'User.DeleteRestore.All',    # soft delete inactive users
-    'Directory.Read.All',        # directory recycle bin + subscription on /users + exclusion group members
-    'GroupMember.ReadWrite.All', # remove inactive users from groups
-    'AuditLog.Read.All',         # signInActivity (inactive-user detection; needs Entra ID P1)
-    'Sites.FullControl.All',     # unshare any OneDrive
-    'MailboxSettings.ReadWrite', # auto-reply + inbox forward rule
-    'Calendars.ReadWrite'        # cancel organised meetings
-)
+# The API permissions (app roles on Graph / SharePoint / Exchange) and any Entra
+# directory roles the managed identity needs are the single source of truth in
+# deploy/permissions.json, reconciled by Update-ARPermission (deploy/AR.Common.ps1)
+# below. Mail SENDING is NOT an app role: it is granted via Exchange Online RBAC
+# (mailbox-scoped) further down. Add a new API requirement in permissions.json and
+# both this deploy and Update-M365AutoRevocate.ps1 will grant it.
 
 # Microsoft Graph change-notification egress ranges. Graph POSTs the subscription
 # validation handshake and every change notification to NotificationHandler from
@@ -210,6 +201,41 @@ function Get-MyPublicIp {
         catch { }
     }
     return $null
+}
+function Test-AzureCloudShell {
+    # True when running inside Azure Cloud Shell. There, the machine's public IP is
+    # the Cloud Shell container's Azure egress address, NOT the admin's, so it must
+    # never be auto-whitelisted.
+    return [bool](
+        ($env:AZUREPS_HOST_ENVIRONMENT -like 'cloud-shell*') -or
+        ($env:POWERSHELL_DISTRIBUTION_CHANNEL -eq 'CloudShell') -or
+        $env:ACC_CLOUD
+    )
+}
+function Show-ARSignInIpHint {
+    # Best-effort: show the admin their recent sign-in source IPs (from the Entra
+    # sign-in logs of the signed-in account) so they can recognise the public IP to
+    # whitelist. Needs the account to be able to read its own sign-in logs (a Global
+    # Administrator can). Never throws -- it is only a convenience hint.
+    Write-Host 'Looking up your recent sign-in IP addresses to help you choose...'
+    try {
+        if (Get-Command Invoke-AzRestMethod -ErrorAction SilentlyContinue) {
+            $me = (Invoke-AzRestMethod -Method GET -Uri 'https://graph.microsoft.com/v1.0/me').Content | ConvertFrom-Json
+            $upn = "$($me.userPrincipalName)"
+            if ($upn) {
+                $filter = [Uri]::EscapeDataString("userPrincipalName eq '$upn'")
+                $resp = (Invoke-AzRestMethod -Method GET -Uri "https://graph.microsoft.com/v1.0/auditLogs/signIns?`$top=5&`$filter=$filter").Content | ConvertFrom-Json
+                $rows = @($resp.value | Select-Object createdDateTime, ipAddress, appDisplayName)
+                if ($rows.Count) {
+                    Write-Host 'Your most recent sign-ins (the ipAddress is very likely the IP to whitelist):' -ForegroundColor Cyan
+                    ($rows | Format-Table -AutoSize | Out-String).TrimEnd() | Write-Host
+                    return
+                }
+            }
+        }
+    }
+    catch { }
+    Write-Host '(Could not read your sign-in history automatically. Find your public IP from the workstation that will manage the tool, e.g. https://ifconfig.me.)'
 }
 
 # Single source of truth for the version: the VERSION file at the repo root,
@@ -448,77 +474,16 @@ if ($rbacFailed) {
     Write-Warning "You need 'Owner' or 'User Access Administrator' on the storage account. Grant the roles to principalId $principalId on the storage account, then re-run."
 }
 
-# --- Microsoft Graph application permissions ---------------------------------
-Write-Step 'Microsoft Graph application permissions'
-$graphSp = (Invoke-Az -AzArgs @('ad', 'sp', 'show', '--id', $graphAppId) | Out-String | ConvertFrom-Json)
-$graphSpId = $graphSp.id
-$graphRolesFailed = @()
-# One up-front read of what is already assigned (idempotent re-runs).
-$existingOut = Invoke-Az -AzArgs @('rest', '--method', 'GET', '--uri', "https://graph.microsoft.com/v1.0/servicePrincipals/$principalId/appRoleAssignments") -AllowFail
-$existing = if ($existingOut) { $existingOut | Out-String | ConvertFrom-Json } else { $null }
-foreach ($roleValue in $requiredGraphRoles) {
-    $appRole = $graphSp.appRoles | Where-Object { $_.value -eq $roleValue -and $_.allowedMemberTypes -contains 'Application' } | Select-Object -First 1
-    if (-not $appRole) { Write-Warning "Graph app role '$roleValue' not found; skipping."; $graphRolesFailed += $roleValue; continue }
-
-    if ($existing -and ($existing.value | Where-Object { $_.appRoleId -eq $appRole.id -and $_.resourceId -eq $graphSpId })) {
-        Write-Host "Already granted: $roleValue"
-        continue
-    }
-    Write-Host "Granting: $roleValue"
-    $grant = Invoke-AzRestJson -Method POST -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$principalId/appRoleAssignments" `
-        -Body @{ principalId = $principalId; resourceId = $graphSpId; appRoleId = $appRole.id } -AllowFail
-    if (-not $grant) { $graphRolesFailed += $roleValue; Write-Warning "Could not grant '$roleValue' (requires Global Admin / Privileged Role Admin)." }
-}
-
-# SharePoint app-only permission for the site-level sharing flag: the OneDrive
-# unshare disables sharing on the personal site via the tenant-admin CSOM
-# endpoint, which authorizes against the 'Office 365 SharePoint Online'
-# service principal, NOT Graph (same role name, different resource).
-$spoAppId = '00000003-0000-0ff1-ce00-000000000000'
-$spoSp = Invoke-Az -AzArgs @('ad', 'sp', 'show', '--id', $spoAppId) -AllowFail | Out-String | ConvertFrom-Json
-$spoRole = if ($spoSp) { $spoSp.appRoles | Where-Object { $_.value -eq 'Sites.FullControl.All' -and $_.allowedMemberTypes -contains 'Application' } | Select-Object -First 1 } else { $null }
-if ($spoRole) {
-    if ($existing -and ($existing.value | Where-Object { $_.appRoleId -eq $spoRole.id -and $_.resourceId -eq $spoSp.id })) {
-        Write-Host 'Already granted: Sites.FullControl.All on SharePoint Online (site sharing flag)'
-    }
-    else {
-        Write-Host 'Granting: Sites.FullControl.All on SharePoint Online (site sharing flag)'
-        $grant = Invoke-AzRestJson -Method POST -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$principalId/appRoleAssignments" `
-            -Body @{ principalId = $principalId; resourceId = $spoSp.id; appRoleId = $spoRole.id } -AllowFail
-        if (-not $grant) {
-            $graphRolesFailed += 'Sites.FullControl.All (SharePoint Online)'
-            Write-Warning 'Could not grant the SharePoint role; the OneDrive unshare action will FAIL until it is granted + consented (there is no per-item fallback).'
-        }
-    }
-}
-else { Write-Warning "Could not resolve the 'Office 365 SharePoint Online' app role; the OneDrive unshare action will FAIL until Sites.FullControl.All is granted + consented (there is no per-item fallback)." }
-
-# Exchange Online app-only management permission. The mailbox-type read (used to
-# exclude shared/room/equipment mailboxes) calls the Exchange admin REST API,
-# which authorizes against the 'Office 365 Exchange Online' service principal and
-# requires the Exchange.ManageAsApp app role. Without it Exchange rejects the
-# managed identity's token outright (HTTP 401 invalid_token) -- the RBAC-for-
-# Applications role assignment below only SCOPES what an accepted token may do; it
-# is Exchange.ManageAsApp that lets the token be accepted at all. So both are
-# needed. This requires admin consent (the appRoleAssignment IS the consent).
-$exoOnlineAppId = '00000002-0000-0ff1-ce00-000000000000'   # Office 365 Exchange Online
-$exoOnlineSp = Invoke-Az -AzArgs @('ad', 'sp', 'show', '--id', $exoOnlineAppId) -AllowFail | Out-String | ConvertFrom-Json
-$exoRole = if ($exoOnlineSp) { $exoOnlineSp.appRoles | Where-Object { $_.value -eq 'Exchange.ManageAsApp' -and $_.allowedMemberTypes -contains 'Application' } | Select-Object -First 1 } else { $null }
-if ($exoRole) {
-    if ($existing -and ($existing.value | Where-Object { $_.appRoleId -eq $exoRole.id -and $_.resourceId -eq $exoOnlineSp.id })) {
-        Write-Host 'Already granted: Exchange.ManageAsApp (Office 365 Exchange Online)'
-    }
-    else {
-        Write-Host 'Granting: Exchange.ManageAsApp (Office 365 Exchange Online)'
-        $grant = Invoke-AzRestJson -Method POST -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$principalId/appRoleAssignments" `
-            -Body @{ principalId = $principalId; resourceId = $exoOnlineSp.id; appRoleId = $exoRole.id } -AllowFail
-        if (-not $grant) {
-            $graphRolesFailed += 'Exchange.ManageAsApp (Office 365 Exchange Online)'
-            Write-Warning 'Could not grant Exchange.ManageAsApp; shared/room/equipment mailbox exclusion will fail with HTTP 401 until it is granted + consented (needs Global Admin / Privileged Role Admin).'
-        }
-    }
-}
-else { Write-Warning "Could not resolve the 'Office 365 Exchange Online' Exchange.ManageAsApp app role; shared/room/equipment mailbox exclusion will not work until it is granted." }
+# --- API permissions (app roles) + directory roles ---------------------------
+# Everything the managed identity needs on Microsoft Graph, SharePoint Online and
+# Exchange Online (plus any Entra directory roles) is reconciled from
+# deploy/permissions.json by the shared helper, which grants whatever is missing.
+# This is the SAME code the update script runs, so a new requirement added to the
+# JSON is applied on the next deploy or update.
+Write-Step 'API permissions'
+. (Join-Path $PSScriptRoot 'AR.Common.ps1')
+$graphRolesFailed = @(Update-ARPermission -PrincipalId $principalId)
+if ($graphRolesFailed.Count -eq 0) { Write-Host 'API permissions reconciled: all required roles are granted.' -ForegroundColor Green }
 
 # --- Exchange Online: mailbox-scoped mail (RBAC for Applications) --------------
 # Instead of a tenant-wide Graph Mail.Send app role, grant the identity a
@@ -669,12 +634,28 @@ Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 Write-Step 'Notification URL + subscription'
 Write-Host 'Waiting 15s for the function to become queryable...'
 Start-Sleep -Seconds 15
+# Try the per-function key first (tightest scope). On Flex Consumption this often
+# is NOT available for a while after a code deploy: the per-function key only
+# exists once the host has indexed the function as an ARM sub-resource, which
+# lags. So sync the triggers to nudge that, and fall back to the default HOST key
+# (readable as soon as the app exists) which authorises the same call --
+# NotificationHandler is the only function-key-protected HTTP function, so the
+# blast radius is identical.
 $funcKey = $null
 for ($i = 0; $i -lt 6 -and -not $funcKey; $i++) {
     $funcKey = Get-AzScalar (Invoke-Az -AzArgs @('functionapp', 'function', 'keys', 'list', '--name', $AppName, '--resource-group', $ResourceGroup, '--function-name', 'NotificationHandler', '--query', 'default', '-o', 'tsv') -AllowFail)
     if (-not $funcKey) { Start-Sleep -Seconds 10 }
 }
-if (-not $funcKey) { throw 'Could not read the NotificationHandler function key. Deploy may still be in progress; re-run to finish subscription setup.' }
+if (-not $funcKey) {
+    Write-Host 'Per-function key not published yet (Flex host still indexing); syncing triggers and falling back to the default host key...'
+    Invoke-Az -AzArgs @('rest', '--method', 'post',
+        '--url', "https://management.azure.com/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Web/sites/$AppName/syncfunctiontriggers?api-version=2023-12-01") -AllowFail | Out-Null
+    for ($i = 0; $i -lt 6 -and -not $funcKey; $i++) {
+        $funcKey = Get-AzScalar (Invoke-Az -AzArgs @('functionapp', 'keys', 'list', '--name', $AppName, '--resource-group', $ResourceGroup, '--query', 'functionKeys.default', '-o', 'tsv') -AllowFail)
+        if (-not $funcKey) { Start-Sleep -Seconds 10 }
+    }
+}
+if (-not $funcKey) { throw 'Could not read a usable function key for NotificationHandler after retries. The functions may still be starting; re-running the deploy (it is idempotent) will finish subscription setup.' }
 
 $hostName = Get-AzScalar (Invoke-Az -AzArgs @('functionapp', 'show', '--name', $AppName, '--resource-group', $ResourceGroup, '--query', 'defaultHostName', '-o', 'tsv') -AllowFail)
 # Fall back to the deterministic public-cloud host name if the query comes back
@@ -922,11 +903,27 @@ if ($SkipNetworkLockdown) {
 }
 else {
     Write-Step 'Network access restrictions'
-    $myIp = Get-MyPublicIp
-    $allowedIps = @(@($AllowedAdminIp) + @($myIp) | Where-Object { $_ } | Select-Object -Unique)
+    # In Azure Cloud Shell, auto-detection returns the Cloud Shell container's
+    # Azure egress IP, which is the wrong thing to whitelist (and would lock the
+    # admin out). So there we do NOT auto-detect: use -AllowedAdminIp if given,
+    # otherwise ask (with a hint from the sign-in logs). Elsewhere, auto-detect.
+    $detectedIp = $null
+    if (Test-AzureCloudShell) {
+        Write-Host 'Azure Cloud Shell detected: the auto-detected IP would be an Azure address, not yours, so it will NOT be used.' -ForegroundColor Yellow
+        if (-not $AllowedAdminIp) {
+            Show-ARSignInIpHint
+            Write-Host ''
+            $entered = (Read-Host 'Public IP or CIDR to allow admin access from (blank = skip lockdown for now, set it later)').Trim()
+            if ($entered) { $AllowedAdminIp = @($entered) }
+        }
+    }
+    else {
+        $detectedIp = Get-MyPublicIp
+    }
+    $allowedIps = @(@($AllowedAdminIp) + @($detectedIp) | Where-Object { $_ } | Select-Object -Unique)
 
     if ($allowedIps.Count -eq 0) {
-        Write-Warning 'Could not determine any admin IP to allow (public-IP lookup failed and -AllowedAdminIp was not given). SKIPPING the lockdown so you are not locked out. Re-run with -AllowedAdminIp <your.public.ip/cidr>, or lock it down in the portal (see README > Network access).'
+        Write-Warning 'No admin IP to allow (none entered / detected, and -AllowedAdminIp not given). SKIPPING the lockdown so you are not locked out. Re-run with -AllowedAdminIp <your.public.ip/cidr>, or lock it down in the portal (see README > Network access).'
     }
     else {
         Write-Host "Allowing admin IP(s): $($allowedIps -join ', ')"
@@ -1005,7 +1002,7 @@ Write-Host ""
 # Only surface follow-up work that is actually needed.
 $steps = [System.Collections.Generic.List[string]]::new()
 if ($graphRolesFailed.Count -gt 0) {
-    $steps.Add("Grant + consent the missing Graph app roles ($($graphRolesFailed -join ', ')) on the '$AppName' enterprise app (needs Global Admin / Privileged Role Admin).")
+    $steps.Add("Grant + consent the missing API permissions ($($graphRolesFailed -join ', ')) for the '$AppName' managed identity (needs Global Admin / Privileged Role Admin). Re-running the deploy or the update reconciles them from deploy/permissions.json.")
 }
 if (-not $exoScoped) {
     $steps.Add("Finish the Exchange Online mailbox scoping for '$SenderUpn' (see docs/permissions.md) -- the hand-off email will not send until then.")

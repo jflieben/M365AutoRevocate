@@ -1,0 +1,21 @@
+{
+  "_comment": "Single source of truth for the API permissions (app roles) and Entra directory roles M365AutoRevocate's managed identity requires. Edit ONLY here: both Deploy-M365AutoRevocate.ps1 and Update-M365AutoRevocate.ps1 reconcile the managed identity against this file and grant whatever is missing (idempotent). appRoles[].resource is a key into resources. Adding a new feature that needs another permission = add a line here; the next deploy or update grants it. Granting still needs the operator to be Global Administrator or Privileged Role Administrator.",
+  "resources": {
+    "graph": { "appId": "00000003-0000-0000-c000-000000000000", "displayName": "Microsoft Graph" },
+    "sharepoint": { "appId": "00000003-0000-0ff1-ce00-000000000000", "displayName": "Office 365 SharePoint Online" },
+    "exchange": { "appId": "00000002-0000-0ff1-ce00-000000000000", "displayName": "Office 365 Exchange Online" }
+  },
+  "appRoles": [
+    { "resource": "graph", "value": "User.ReadWrite.All", "reason": "deleted users, manager, ownedObjects, subscription, revoke sessions, disable, licence removal" },
+    { "resource": "graph", "value": "User.DeleteRestore.All", "reason": "soft delete inactive users" },
+    { "resource": "graph", "value": "Directory.Read.All", "reason": "directory recycle bin, subscription on /users, exclusion group members" },
+    { "resource": "graph", "value": "GroupMember.ReadWrite.All", "reason": "remove inactive users from groups" },
+    { "resource": "graph", "value": "AuditLog.Read.All", "reason": "signInActivity for inactive-user detection (needs Entra ID P1)" },
+    { "resource": "graph", "value": "Sites.FullControl.All", "reason": "unshare any OneDrive (Graph side)" },
+    { "resource": "graph", "value": "MailboxSettings.ReadWrite", "reason": "auto-reply and inbox forward rule" },
+    { "resource": "graph", "value": "Calendars.ReadWrite", "reason": "cancel organised meetings" },
+    { "resource": "sharepoint", "value": "Sites.FullControl.All", "reason": "disable sharing on the personal site via the tenant-admin CSOM endpoint (authorises against SharePoint, not Graph)" },
+    { "resource": "exchange", "value": "Exchange.ManageAsApp", "reason": "let Exchange accept the managed-identity token for mailbox-type reads (shared/room/equipment exclusion)" }
+  ],
+  "directoryRoles": []
+}

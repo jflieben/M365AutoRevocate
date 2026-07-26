@@ -32,6 +32,36 @@ For **delete**, you choose **soft** (acts when the user hits the recycle bin) or
 **hard** (acts once the user is permanently deleted - at the latest one day
 before the automatic 30-day purge). See [docs/architecture.md](docs/architecture.md).
 
+## Quick start
+
+Prerequisites (authorisation, needed for **both** methods below): **Global
+Administrator or Privileged Role Administrator** to consent the Graph permissions
+and register the web app; **Exchange Administrator** (the deploy connects to
+Exchange Online as the signed-in user to scope mailbox send); and an **Entra
+security group** for the web-app admins.
+
+### Fastest: one line in Azure Cloud Shell (recommended)
+
+1. Open [Azure Cloud Shell](https://shell.azure.com) and choose **PowerShell**
+   (you are already signed in to Azure there).
+2. Run:
+
+   ```powershell
+   iex (irm https://raw.githubusercontent.com/jflieben/M365AutoRevocate/main/install.ps1)
+   ```
+
+The installer downloads the **latest release**, asks for the five settings
+(subscription id, region, sender mailbox, service desk email, admin group) and
+runs the full deployment. To pin a version or run it unattended, download it and
+pass parameters instead:
+
+```powershell
+irm https://raw.githubusercontent.com/jflieben/M365AutoRevocate/main/install.ps1 -OutFile install.ps1
+./install.ps1 -SubscriptionId <sub> -Location westeurope `
+    -SenderUpn noreply@contoso.com -ServicedeskEmail servicedesk@contoso.com `
+    -AdminGroupName "M365AutoRevocate Admins" -Tags @{ CostCentre = '1234' }
+```
+
 ## Inactive-user monitoring
 
 A daily scan flags enabled accounts with no successful sign-in
@@ -78,59 +108,22 @@ security group** you nominate. The behavioural config lives in a JSON blob in th
 storage account, so edits take effect with no redeploy. See
 [docs/web-app.md](docs/web-app.md).
 
-## How it works
+## Trigger
 
 - A Graph subscription on `/users` (`updated,deleted`) calls an HTTP function.
   `deleted` drives the delete trigger; `updated` is checked for an
   `accountEnabled → false` transition to drive the disable trigger.
 - A daily **inactivity scan** drives the inactive trigger (when enabled).
-- Events are queued and processed asynchronously (OneDrive cleanup can take a
-  while; Graph needs a fast callback).
+- Events are queued and processed asynchronously
 - A daily **directory snapshot** (mandatory, auto-seeded at deploy time) caches
   each user's manager and ownership *before* deletion - Graph erases those
   relationships on delete, so they must be captured ahead of time.
 - Sending the hand-off email uses **Exchange Online RBAC for Applications**,
-  scoped to a single sender mailbox - there is no tenant-wide `Mail.Send`.
+  scoped to a single sender mailbox - no tenant-wide `Mail.Send` :).
 
 Diagram and details: [docs/architecture.md](docs/architecture.md).
 
-## Quick start
-
-Prerequisites (authorisation, needed for **both** methods below): **Global
-Administrator / Privileged Role Administrator** to consent the Graph permissions
-and register the web app; **Exchange Administrator** (the deploy connects to
-Exchange Online as the signed-in user to scope mailbox send); and an **Entra
-security group** for the web-app admins. Azure Cloud Shell already provides the
-tooling (Azure CLI + PowerShell); for a local install you also need the
-[Azure CLI](https://aka.ms/azcli) and the `ExchangeOnlineManagement` module (the
-deploy installs it if missing).
-
-The deploy derives the target tenant from the sender's domain and forces the az
-sign-in there, so you cannot deploy into the wrong tenant.
-
-### Fastest: one line in Azure Cloud Shell (recommended)
-
-1. Open [Azure Cloud Shell](https://shell.azure.com) and choose **PowerShell**
-   (you are already signed in to Azure there).
-2. Run:
-
-   ```powershell
-   iex (irm https://raw.githubusercontent.com/jflieben/M365AutoRevocate/main/install.ps1)
-   ```
-
-The installer downloads the **latest release**, asks for the five settings
-(subscription id, region, sender mailbox, service desk email, admin group) and
-runs the full deployment. To pin a version or run it unattended, download it and
-pass parameters instead:
-
-```powershell
-irm https://raw.githubusercontent.com/jflieben/M365AutoRevocate/main/install.ps1 -OutFile install.ps1
-./install.ps1 -SubscriptionId <sub> -Location westeurope `
-    -SenderUpn noreply@contoso.com -ServicedeskEmail servicedesk@contoso.com `
-    -AdminGroupName "M365AutoRevocate Admins" -Tags @{ CostCentre = '1234' }
-```
-
-### From a local clone
+## Advanced installation from a local clone
 
 ```powershell
 ./deploy/Deploy-M365AutoRevocate.ps1 `
@@ -151,9 +144,7 @@ storage roles, sets up mailbox-scoped mail via Exchange Online, deploys the code
 publishes the web app, registers the subscription, and prints the **admin web app
 URL**.
 
-When it finishes it prints only the follow-up steps that are actually still
-needed (e.g. consent, when the signed-in account could not grant the Graph
-roles itself) - the directory snapshot is seeded automatically. Then open the
+Then open the
 web app: the **setup wizard** takes it from there. The tool starts in
 **simulation (dry run)** mode; when you are confident, turn it off under
 **Configuration &rarr; Simulation mode** in the web app.
@@ -167,7 +158,10 @@ Mail **sending** is granted separately and narrowly via Exchange Online RBAC
 scoped to the sender mailbox. Reading **mailbox types** (to exclude shared/room/
 equipment mailboxes) needs `Exchange.ManageAsApp` on *Office 365 Exchange Online*
 plus the `View-Only Recipients` Exchange role. Storage data plane uses AAD (no
-keys). Full rationale and how to tighten: [docs/permissions.md](docs/permissions.md).
+keys). The app roles (and any directory roles) are defined once in
+[`deploy/permissions.json`](deploy/permissions.json) and granted/reconciled by
+both the deploy and the update. Full rationale and how to tighten:
+[docs/permissions.md](docs/permissions.md).
 
 ## Network access
 
@@ -186,8 +180,13 @@ internet. By default the deploy locks both public surfaces down:
 - **Admin web site** (its own storage account, `arweb<suffix>`): storage firewall
   default action **Deny**, allowing only your public IP.
 
-The deploy detects your current public IP automatically and prints exactly which
-IP(s) it allowed at the end.
+Outside Azure Cloud Shell the deploy detects your current public IP
+automatically. **In Azure Cloud Shell** the detected address is the Cloud Shell
+container's Azure egress (not yours), so the deploy does not use it: it asks for
+the IP/CIDR to allow instead, and tries to show your recent sign-in source IPs
+(from the Entra sign-in logs) to help you pick the right one. Pass
+`-AllowedAdminIp <ip/cidr>` to skip the prompt. Either way, the deploy prints
+exactly which IP(s) it allowed at the end.
 
 The **state** storage account (`arevoc<suffix>`) is deliberately left open: the
 tool reaches its Table/Blob/Queue over the public endpoints via AAD, and the
@@ -264,8 +263,10 @@ See also [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 ```
 install.ps1                          One-line bootstrap (iex) -> latest release -> deploy
 deploy/Deploy-M365AutoRevocate.ps1   Onboarding script (idempotent)
-deploy/Update-M365AutoRevocate.ps1   Fast, non-interactive code/web update
+deploy/Update-M365AutoRevocate.ps1   Fast code/web update + API-permission reconcile
 deploy/Remove-M365AutoRevocate.ps1   Uninstaller (-KeepData / -SkipExchange)
+deploy/AR.Common.ps1                 Shared permission reconciler (deploy + update)
+deploy/permissions.json              Single source of truth for API + directory roles
 .github/workflows/ci.yml             CI: analyze + test, plus auto-release on VERSION bump
 src/                                 Function App
   Modules/AutoRevocate/              Logic (Graph, storage, config, actions, mail, safety, auth)
@@ -305,13 +306,18 @@ this is what makes the tool safe to point at a large tenant. See
 ./deploy/Update-M365AutoRevocate.ps1 -SubscriptionId <sub> -SenderUpn noreply@contoso.com
 ```
 
-Redeploys the function code and web app and stamps the new version. It does not
-touch identity, RBAC, Graph consent, or Exchange Online, so there are no prompts
-(suitable for scheduled patching). The version is shown in the web app footer.
+Redeploys the function code and web app, stamps the new version, and reconciles
+the managed identity's API permissions against `deploy/permissions.json` (granting
+anything a newer version added, so an update never leaves a new feature short a
+permission). It still does not touch the Exchange Online mailbox scoping or the
+Entra app registration, and there are no interactive prompts (suitable for
+scheduled patching). Granting new permissions needs Global Admin / Privileged Role
+Admin; without that the missing grants are reported, not fatal. The version is
+shown in the web app footer.
 
 Re-running the **one-line installer** also updates you: it pulls the latest
-release and runs the (idempotent) full deploy. Use `Update-M365AutoRevocate.ps1`
-when you only want the fast code/web refresh without re-checking permissions.
+release and runs the (idempotent) full deploy, which does everything the update
+does plus the Exchange scoping and app registration.
 
 Releases are cut automatically: when a bumped `VERSION` reaches `main`, the CI
 workflow's release job (gated on the test job) packages the code/web/installer

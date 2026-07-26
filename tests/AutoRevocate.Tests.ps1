@@ -243,3 +243,40 @@ Describe 'Invoke-ARVersionCheck (orchestration)' {
         Should -Invoke -ModuleName AutoRevocate Save-ARVersionCheckState -Times 1
     }
 }
+
+Describe 'Email tool name (toolName config)' {
+    It 'defaults to the product name when absent' {
+        (ConvertTo-ARSanitisedConfig -Raw ([pscustomobject]@{})).toolName | Should -Be 'M365AutoRevocate'
+    }
+    It 'falls back to the product name when blank' {
+        (ConvertTo-ARSanitisedConfig -Raw ([pscustomobject]@{ toolName = '   ' })).toolName | Should -Be 'M365AutoRevocate'
+    }
+    It 'keeps a custom name' {
+        (ConvertTo-ARSanitisedConfig -Raw ([pscustomobject]@{ toolName = 'Contoso IT Offboarding' })).toolName | Should -Be 'Contoso IT Offboarding'
+    }
+    It 'caps the length at 60' {
+        (ConvertTo-ARSanitisedConfig -Raw ([pscustomobject]@{ toolName = ('x' * 100) })).toolName.Length | Should -Be 60
+    }
+    It 'renders the custom name in the notification footer' {
+        $html = Get-ARNotificationHtml -DeletedDisplayName 'Jane' -Trigger 'delete' -EventDescription 'deleted' `
+            -Artifacts @() -Recipient ([pscustomobject]@{ DisplayName = 'Boss'; Kind = 'manager'; Email = 'b@x.com' }) -Actions $null -ToolName 'Contoso IT Offboarding'
+        $html | Should -Match 'Automated message from Contoso IT Offboarding'
+    }
+}
+
+Describe 'Get-ARUserArtifacts' {
+    It 'filters out tokenLifetimePolicy and drops the Detail field' {
+        Mock -ModuleName AutoRevocate Invoke-ARGraph {
+            @(
+                [pscustomobject]@{ '@odata.type' = '#microsoft.graph.group'; id = 'g1'; displayName = 'Team A' },
+                [pscustomobject]@{ '@odata.type' = '#microsoft.graph.tokenLifetimePolicy'; id = 'p1'; displayName = 'TLP' },
+                [pscustomobject]@{ '@odata.type' = '#microsoft.graph.application'; id = 'a1'; displayName = 'App X' }
+            )
+        }
+        $r = @(Get-ARUserArtifacts -UserId 'u1' -Trigger 'disable')
+        $r.Count | Should -Be 2
+        $r.Type | Should -Not -Contain 'tokenLifetimePolicy'
+        $r.Type | Should -Contain 'group'
+        $r[0].PSObject.Properties['Detail'] | Should -BeNullOrEmpty
+    }
+}

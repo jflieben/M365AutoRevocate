@@ -123,9 +123,10 @@ function Send-ARVersionUpdateMail {
         [string]$ReleasesUrl
     )
     $cfg = Get-ARConfig
+    $tool = ConvertTo-ARHtmlEncoded (Get-ARToolName)
     $link = if ($ReleasesUrl) { $ReleasesUrl } else { $cfg.ReleasesUrl }
     $html = '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#201f1e;max-width:640px">' +
-        '<p>A newer version of <strong>M365AutoRevocate</strong> is available.</p>' +
+        "<p>A newer version of <strong>$tool</strong> is available.</p>" +
         '<table style="border-collapse:collapse;margin:12px 0">' +
         '<tr><td style="padding:2px 12px 2px 0;color:#605e5c">Installed</td><td style="padding:2px 0"><strong>' + (ConvertTo-ARHtmlEncoded $Installed) + '</strong></td></tr>' +
         '<tr><td style="padding:2px 12px 2px 0;color:#605e5c">Latest</td><td style="padding:2px 0"><strong>' + (ConvertTo-ARHtmlEncoded $Latest) + '</strong></td></tr>' +
@@ -133,10 +134,10 @@ function Send-ARVersionUpdateMail {
         '<p>Review the release notes, then update when convenient by re-running the deployment (or the update script).</p>' +
         '<p><a href="' + (ConvertTo-ARHtmlEncoded $link) + '">Release notes and update instructions</a></p>' +
         '<hr style="border:none;border-top:1px solid #edebe9;margin:16px 0">' +
-        '<p style="color:#8a8886;font-size:12px">Automated notice from M365AutoRevocate. ' +
+        "<p style=`"color:#8a8886;font-size:12px`">Automated notice from $tool. " +
         'You can turn this notice off under Configuration in the admin console; the in-app update banner stays either way.</p></div>'
     $body = @{
-        message         = @{ subject = "M365AutoRevocate update available: $Latest"; body = @{ contentType = 'HTML'; content = $html }; toRecipients = @(@{ emailAddress = @{ address = $To } }) }
+        message         = @{ subject = "$(Get-ARToolName) update available: $Latest"; body = @{ contentType = 'HTML'; content = $html }; toRecipients = @(@{ emailAddress = @{ address = $To } }) }
         saveToSentItems = $false
     }
     Invoke-ARGraph -Method Post -Uri ('/users/' + [Uri]::EscapeDataString($cfg.SenderUpn) + '/sendMail') -Body $body | Out-Null

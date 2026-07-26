@@ -107,13 +107,9 @@ Entra + Easy Auth calls in try/catch), complete it manually:
   despite the origin being allow-listed. With `AllowAnonymous` the API is still
   protected: Easy Auth validates any token that IS present, and every admin
   function independently validates the bearer token (RS256/JWKS/aud/iss/exp) and
-  fails closed. Fix a live app with:
-  `az webapp auth update --name <func> --resource-group <rg> --unauthenticated-client-action AllowAnonymous`.
+  fails closed. 
 - `msal-browser.min.js` (currently **v4.x**) is **bundled locally** in `web/`
-  (not loaded from a CDN), so content filtering can't break sign-in. MSAL v3+
-  requires `msalInstance.initialize()` before any other call; `app.js` does this
-  and chains sign-in off it. To upgrade MSAL, replace the file and keep that
-  contract.
+  (not loaded from a CDN), so content filtering can't break sign-in. 
 - The static site is hosted in a **separate storage account** (`arweb<suffix>`)
   that the managed identity has no access to, so a runtime compromise cannot
   rewrite the admin page. The deploy uploads it with that account's own key.
