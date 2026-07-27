@@ -2,19 +2,12 @@
 
 <img src="logo.png" alt="M365AutoRevocate logo" width="120" align="right" />
 
-Automated offboarding cleanup for Microsoft 365, driven by Microsoft Graph
-change notifications and configured from a small admin web app.
+Automated offboarding cleanup for Microsoft 365, the trick is to use Microsoft Graph
+change notifications and a small admin web app for config / monitoring.
 
-The tool maintains its own Graph subscription and, when a monitored user goes
-**inactive**, is **disabled**, or is **deleted**, runs the offboarding actions
-you have enabled. It authenticates with a **managed identity** only - no client
-secrets or certificates.
+When a user goes **inactive**, is **disabled**, or is **deleted** it runs the offboarding actions you have enabled. It authenticates with a **managed identity** only - no client secrets or certificates!
 
 ## What it can do
-
-Each action can be configured to run **at inactive**, **at disable**, **at
-delete**, or any combination. Boxes that make no sense at a given moment (e.g.
-mailbox actions after deletion) grey out.
 
 | Action | At inactive | At disable | At delete |
 |--------|:----------:|:---------:|:--------:|
@@ -33,10 +26,7 @@ mailbox actions after deletion) grey out.
 | Remove group memberships | ✓ | - | - |
 | Soft delete the account (always runs last) | ✓ | - | - |
 
-† **Power Platform actions** act on the flows and canvas apps a user owns. There
-is no Graph permission for them, so they stay greyed out until an admin authorises
-the tool as a Power Platform admin once (`New-PowerAppManagementApp`; the Actions
-tab shows the exact command). See [docs/permissions.md](docs/permissions.md).
+† **Power Platform actions** act on the flows and canvas apps a user owns. An admin has to authorise the tool as a Power Platform admin once, as the GUI will guide you. See [docs/permissions.md](docs/permissions.md).
 
 For **delete**, you choose **soft** (acts when the user hits the recycle bin) or
 **hard** (acts once the user is permanently deleted - at the latest one day
@@ -44,11 +34,7 @@ before the automatic 30-day purge). See [docs/architecture.md](docs/architecture
 
 ## Quick start
 
-Prerequisites (authorisation, needed for **both** methods below): **Global
-Administrator or Privileged Role Administrator** to consent the Graph permissions
-and register the web app; **Exchange Administrator** (the deploy connects to
-Exchange Online as the signed-in user to scope mailbox send); and an **Entra
-security group** for the web-app admins.
+Prerequisites: **Global Administrator or Privileged Role Administrator** to consent permissions and register the web app for SSO; **Exchange Administrator** (scoped mailbox send); and an **Entra security group** for the web-app admins.
 
 ### Fastest: one line in Azure Cloud Shell (recommended)
 
@@ -75,38 +61,20 @@ irm https://raw.githubusercontent.com/jflieben/M365AutoRevocate/main/install.ps1
 ## Inactive-user monitoring
 
 A daily scan flags enabled accounts with no successful sign-in
-(`signInActivity.lastSuccessfulSignInDateTime`) for the configured number of
-days and runs the inactive-trigger actions on them. Never-signed-in accounts
-age from their **creation date**, so new accounts are safe. Requires an **Entra
-ID P1** licence (the sign-in activity property is premium).
+(`signInActivity.lastSuccessfulSignInDateTime`) and runs the inactive-trigger actions on them. Never-signed-in accounts age from their **creation date** (new accounts are safe). Requires an **Entra ID P1** licence (the sign-in activity property is premium).
 
 ## Global exclusions (never touched)
-
-Some accounts must never be offboarded by anything, at **any** trigger (inactive,
-disable *or* delete):
 
 - **Exclusion group** - an Entra security group whose (transitive) members are
   ignored everywhere. Use it for break-glass and service accounts.
 - **Shared / room / equipment mailboxes** - detected from Exchange
-  (`RecipientTypeDetails`, keyed to the Entra object id) since Graph has no
-  mailbox-type property. On by default. These are commonly disabled or never
-  signed in, but must stay.
-
-Both are enforced wherever the tool would act or enqueue work. They are reliable
-while the account still exists (inactive/disable); at the delete trigger the
-object is already gone from the directory and Exchange, so exclusion there is
-best-effort. If a configured exclusion source can't be read, the tool **fails
-closed** (skips rather than risk acting on a protected account) - so the shared-
-mailbox exclusion needs the managed identity's `View-Only Recipients` Exchange
-role (granted by the deploy); turn the option off if you don't want that
-dependency.
+  (`RecipientTypeDetails`) since Graph has no mailbox-type property. On by default.
 
 ## Admin web app
 
 The deploy publishes a small **static web app in the storage account**. The
 first sign-in runs a short **setup wizard** (delete timing, inactive monitoring,
-threshold, exclusion group) followed by a quick callout tour. After that, admins
-can:
+threshold, exclusion group). Admins can:
 
 - toggle each action's inactive/disable/delete triggers and set their options
   (auto-reply text, forward address, cancellation note),
@@ -115,14 +83,11 @@ can:
 
 It uses **delegated Entra sign-in** (MSAL) and is restricted to an **Entra
 security group** you nominate. The behavioural config lives in a JSON blob in the
-storage account, so edits take effect with no redeploy. See
-[docs/web-app.md](docs/web-app.md).
+storage account. See [docs/web-app.md](docs/web-app.md).
 
 ## Trigger
 
 - A Graph subscription on `/users` (`updated,deleted`) calls an HTTP function.
-  `deleted` drives the delete trigger; `updated` is checked for an
-  `accountEnabled → false` transition to drive the disable trigger.
 - A daily **inactivity scan** drives the inactive trigger (when enabled).
 - Events are queued and processed asynchronously
 - A daily **directory snapshot** (mandatory, auto-seeded at deploy time) caches
@@ -145,14 +110,7 @@ Diagram and details: [docs/architecture.md](docs/architecture.md).
 ```
 
 Add `-Tags @{ CostCentre = '1234'; Env = 'prod' }` if your tenant requires tags
-on the resource group. Delete timing (soft vs hard) is chosen in the setup
-wizard, not on the command line.
-
-Either method provisions everything (resource group, storage, Application Insights,
-Flex Consumption Function App + managed identity), grants Graph permissions and
-storage roles, sets up mailbox-scoped mail via Exchange Online, deploys the code,
-publishes the web app, registers the subscription, and prints the **admin web app
-URL**.
+on the resource group.
 
 Then open the
 web app: the **setup wizard** takes it from there. The tool starts in
@@ -166,17 +124,11 @@ Managed-identity Graph app roles: `User.ReadWrite.All`, `User.DeleteRestore.All`
 `Sites.FullControl.All`, `MailboxSettings.ReadWrite`, `Calendars.ReadWrite`.
 Mail **sending** is granted separately and narrowly via Exchange Online RBAC
 scoped to the sender mailbox. Reading **mailbox types** (to exclude shared/room/
-equipment mailboxes) needs `Exchange.ManageAsApp` on *Office 365 Exchange Online*
-plus the `View-Only Recipients` Exchange role. Storage data plane uses AAD (no
-keys). The app roles (and any directory roles) are defined once in
-[`deploy/permissions.json`](deploy/permissions.json) and granted/reconciled by
-both the deploy and the update. Full rationale and how to tighten:
-[docs/permissions.md](docs/permissions.md).
+equipment mailboxes) needs `Exchange.ManageAsApp` plus the `View-Only Recipients` Exchange role. Storage data plane uses AAD (no keys). The app roles (and any directory roles) are defined once in [`deploy/permissions.json`](deploy/permissions.json). Full rationale and how to tighten: [docs/permissions.md](docs/permissions.md).
 
 ## Network access
 
-The admin console and its API should **not** be reachable from the whole
-internet. By default the deploy locks both public surfaces down:
+By default the deploy locks both public surfaces down:
 
 - **Function App** (admin API + the Graph webhook): App Service access
   restrictions allow only your public IP, with the unmatched rule action set to
@@ -184,19 +136,16 @@ internet. By default the deploy locks both public surfaces down:
   deletions/disables keep arriving:
   `20.20.32.0/19`, `20.190.128.0/18`, `20.231.128.0/19`, `40.126.0.0/18`
   (row #23 of Microsoft's
-  [additional Office 365 IP addresses and URLs](https://learn.microsoft.com/en-us/microsoft-365/enterprise/additional-office365-ip-addresses-and-urls?view=o365-worldwide);
-  Microsoft can change these, so re-check that page and update the rules if the
-  webhook stops receiving).
+  [additional Office 365 IP addresses and URLs](https://learn.microsoft.com/en-us/microsoft-365/enterprise/additional-office365-ip-addresses-and-urls?view=o365-worldwide)).
 - **Admin web site** (its own storage account, `arweb<suffix>`): storage firewall
   default action **Deny**, allowing only your public IP.
 
 Outside Azure Cloud Shell the deploy detects your current public IP
 automatically. **In Azure Cloud Shell** the detected address is the Cloud Shell
-container's Azure egress (not yours), so the deploy does not use it: it asks for
+container's Azure egress (not yours): it asks for
 the IP/CIDR to allow instead, and tries to show your recent sign-in source IPs
 (from the Entra sign-in logs) to help you pick the right one. Pass
-`-AllowedAdminIp <ip/cidr>` to skip the prompt. Either way, the deploy prints
-exactly which IP(s) it allowed at the end.
+`-AllowedAdminIp <ip/cidr>` to skip the prompt.
 
 The **state** storage account (`arevoc<suffix>`) is deliberately left open: the
 tool reaches its Table/Blob/Queue over the public endpoints via AAD, and the
@@ -227,16 +176,6 @@ and the per-action trigger matrix with option values - live in a config **blob**
 and are edited from the web app (or by editing `config.json` in the
 `autorevocate-config` container).
 
-| App setting | Meaning |
-|-------------|---------|
-| `AR_SENDER_UPN` | Mailbox the hand-off email is sent from |
-| `AR_SERVICEDESK_EMAIL` | Seed service desk address for the config blob until first save |
-| `AR_NOTIFICATION_URL`, `AR_CLIENT_STATE`, `AR_TABLE_ENDPOINT`, `AR_BLOB_ENDPOINT` | Endpoints / validation token (set by deploy) |
-
-> **Simulation (dry run)** is a behaviour setting in the config blob, edited from
-> the web app (**Configuration &rarr; Simulation mode**), not an app setting. New
-> installs start in simulation until you turn it off.
-
 ## Limitations & caveats
 
 - **Manager/ownership need the snapshot.** Graph drops those on deletion, so the
@@ -250,9 +189,6 @@ and are edited from the web app (or by editing `config.json` in the
   the threshold has a 7-day floor as a typo guard.
 - **Broad mailbox/calendar/group permissions** are unavoidable for actions that
   act on arbitrary departing users. Sending stays narrowly scoped.
-- Validate on first deploy in **simulation mode** (on by default) before turning it off to enable destructive actions.
-- **Multi-geo OneDrive:** the personal-site host is derived for the tenant's
-  default geo; satellite-geo OneDrives may not resolve.
 - **The state storage account must keep public network access** (the tool
   reaches its Table/Blob/Queue over the public endpoints via AAD). The deploy's
   network lockdown restricts only the two *inbound* surfaces (Function App + admin
@@ -268,36 +204,6 @@ and are edited from the web app (or by editing `config.json` in the
 
 See also [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
-## Repository layout
-
-```
-install.ps1                          One-line bootstrap (iex) -> latest release -> deploy
-deploy/Deploy-M365AutoRevocate.ps1   Onboarding script (idempotent)
-deploy/Update-M365AutoRevocate.ps1   Fast code/web update + API-permission reconcile
-deploy/Remove-M365AutoRevocate.ps1   Uninstaller (-KeepData / -SkipExchange)
-deploy/AR.Common.ps1                 Shared permission reconciler (deploy + update)
-deploy/permissions.json              Single source of truth for API + directory roles
-.github/workflows/ci.yml             CI: analyze + test, plus auto-release on VERSION bump
-src/                                 Function App
-  Modules/AutoRevocate/              Logic (Graph, storage, config, actions, mail, safety, auth)
-  NotificationHandler/               HTTP: Graph callback
-  RevocationProcessor/               Queue: run/queue cleanup (inactive + disable + delete)
-  SubscriptionManager/               Timer: create/renew subscription
-  HardDeleteReconciler/              Timer: hard-delete polling
-  DirectorySnapshot/                 Timer: manager/ownership cache (delta + batch)
-  InactivityScanner/                 Timer: daily inactive-user scan
-  ReconciliationSweep/               Timer: enqueue events missed by notifications
-  ActivityLogCleanup/                Timer (weekly): log retention + snapshot prune
-  Watchdog/                          Timer: daily health alert to the service desk
-  VersionChecker/                    Timer (weekly, randomised): update check
-  ConfigApi / LogsApi / StatusApi/   HTTP admin API (behind Easy Auth + token check)
-  GroupsApi / PreviewApi / ResumeApi/  HTTP admin API (autocomplete, what-if, resume)
-web/                                 Admin SPA (wizard, matrix, log viewer, banners)
-tests/                               Pester unit tests
-docs/                                architecture, permissions, web-app, opportunities, privacy, operations
-SECURITY.md  CHANGELOG.md  LICENSE  VERSION
-```
-
 ## Safety (circuit breaker)
 
 Because a single mistake elsewhere (a mass disable, an accidental directory-sync
@@ -306,8 +212,7 @@ cascade into thousands of irreversible cleanups, the tool has a **circuit
 breaker**: configurable per-trigger daily caps and a percent-of-directory
 ceiling. When a run would exceed a limit it **pauses all processing** and shows a
 "review & resume" banner in the web app; queued work is held (not lost) until an
-admin resumes. Combined with dry-run (on by default) and the exclusion group,
-this is what makes the tool safe to point at a large tenant. See
+admin resumes. See
 [SECURITY.md](SECURITY.md).
 
 ## Upgrading
@@ -317,13 +222,7 @@ this is what makes the tool safe to point at a large tenant. See
 ```
 
 Redeploys the function code and web app, stamps the new version, and reconciles
-the managed identity's API permissions against `deploy/permissions.json` (granting
-anything a newer version added, so an update never leaves a new feature short a
-permission). It still does not touch the Exchange Online mailbox scoping or the
-Entra app registration, and there are no interactive prompts (suitable for
-scheduled patching). Granting new permissions needs Global Admin / Privileged Role
-Admin; without that the missing grants are reported, not fatal. The version is
-shown in the web app footer.
+the managed identity's API permissions against `deploy/permissions.json`. There are no interactive prompts (suitable for scheduled patching). Granting new permissions needs Global Admin / Privileged Role Admin; without that the missing grants are reported, not fatal. The version is shown in the web app footer.
 
 Re-running the **one-line installer** also updates you: it pulls the latest
 release and runs the (idempotent) full deploy, which does everything the update
@@ -331,8 +230,7 @@ does plus the Exchange scoping and app registration.
 
 Releases are cut automatically: when a bumped `VERSION` reaches `main`, the CI
 workflow's release job (gated on the test job) packages the code/web/installer
-and publishes a GitHub release for that version. A push that does not change
-`VERSION` finds the release already present and skips. The in-app weekly
+and publishes a GitHub release for that version. The in-app weekly
 [update check](#update-notifications) compares against that.
 
 ### Update notifications
@@ -344,12 +242,6 @@ installs never hits the repo all at once). When the repo is ahead:
 - the admin console always shows an "Update available" banner and annotates the
   footer version, and
 - unless you turn it off, the service desk is emailed once per new version.
-
-The check and the in-app banner are always on. Only the service-desk email is
-optional: toggle it in the setup wizard or under Configuration ("Email service
-desk about new versions"). The result (installed, latest, last checked) is also
-on the Diagnostics tab. To point at a fork or an internal mirror, set the
-`AR_VERSION_URL` (raw VERSION file) and `AR_RELEASES_URL` app settings.
 
 ## Uninstalling
 
